@@ -1,150 +1,148 @@
-import json
 import logging
 import sys
 import time
 from datetime import datetime, timedelta
+
 from booking_agent import BookingAgent
+from booking_utils import TimeUtils, ConfigLoader
 
 # --- CONFIGURATION ---
-ROOM_PRIORITY_LIST = [13, 14, 15, 16, 17, 18, 19] 
-BOOKING_DELAY_HOURS = 2  # Slot opens 2 hours AFTER its start time
+ROOM_PRIORITY_LIST = [13, 14, 15, 16, 17, 18, 19]
 
-# Logging Setup
+# 1 Hour Delay Logic (Class 12:00 -> Booking Opens 13:00)
+BOOKING_DELAY_HOURS = 1 
+
+ATTACK_START_BUFFER = 60
+MAX_ATTACK_DURATION = 300
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("booking_system.log")
-    ]
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("booking_system.log")]
 )
 logger = logging.getLogger(__name__)
 
-def get_utc_times(target_datetime):
-    """
-    Creates UTC timestamps for the slot.
-    Logic: Target H -> Send H+1 (API Offset) -> Convert to UTC (-2 for Israel Winter)
-    """
-    base_dt = target_datetime.replace(minute=0, second=0, microsecond=0)
-    
-    # 15:00 becomes 16:00 (API Requirement)
-    api_start_dt = base_dt + timedelta(hours=1)
-    api_end_dt = api_start_dt + timedelta(hours=1)
-    
-    # Convert to UTC
-    start_utc = api_start_dt - timedelta(hours=2)
-    end_utc = api_end_dt - timedelta(hours=2)
-    
-    fmt = "%Y-%m-%dT%H:%M:%S.000Z"
-    return start_utc.strftime(fmt), end_utc.strftime(fmt)
+class BookingScheduler:
+    def __init__(self):
+        self.users, self.rules = ConfigLoader.load_data()
+        self.active_agents = []
+        self.preferred_room = None # Stores the last successful room
 
-def is_biweekly_match(target_date, anchor_str):
-    try:
-        anchor = datetime.strptime(anchor_str, "%Y-%m-%d")
-        anchor = anchor.replace(hour=0, minute=0, second=0)
-        target = target_date.replace(hour=0, minute=0, second=0)
+    def prepare_agents(self):
+        """Logs in all users and stores valid sessions."""
+        self.active_agents = []
+        if not self.users: return
         
-        delta = target - anchor
-        weeks_diff = delta.days // 7
+        logger.info("--- Preparing Agents (Logging In) ---")
+        for u in self.users:
+            agent = BookingAgent(u)
+            if agent.login():
+                self.active_agents.append(agent)
         
-        return delta.days >= 0 and (weeks_diff % 2 == 0)
-    except Exception as e:
-        logger.error(f"Bi-weekly calculation error: {e}")
+        logger.info(f"Agents Ready: {len(self.active_agents)}/{len(self.users)}")
+
+    def get_room_order(self):
+        """Returns room list with preferred room first."""
+        if self.preferred_room and self.preferred_room in ROOM_PRIORITY_LIST:
+            # Create a new list with preferred room at the front
+            ordered = [self.preferred_room] + [r for r in ROOM_PRIORITY_LIST if r != self.preferred_room]
+            return ordered
+        return ROOM_PRIORITY_LIST
+
+    def run_attack(self, target_class_time):
+        start_utc, end_utc = TimeUtils.get_utc_times(target_class_time)
+        attack_start = datetime.now()
+        
+        # Get prioritized list of rooms
+        current_room_list = self.get_room_order()
+        
+        logger.info(f"--- ATTACK STARTED for {target_class_time.strftime('%H:%M')} (UTC: {start_utc}) ---")
+        logger.info(f"Priority Room Order: {current_room_list}")
+
+        while (datetime.now() - attack_start).total_seconds() < MAX_ATTACK_DURATION:
+            # 1. Iterate Rooms
+            for room_num in current_room_list:
+                resource_id = room_num + 10 
+                
+                # 2. Iterate Users
+                for agent in self.active_agents:
+                    if agent.book_room(resource_id, start_utc, end_utc):
+                        logger.info(f"VICTORY! Room {room_num} secured by {agent.email}")
+                        
+                        # Remember this room for the next consecutive slot
+                        self.preferred_room = room_num
+                        logger.info(f"Setting preferred room to {room_num} for next slot.")
+                        
+                        return True 
+            
+            time.sleep(0.5) 
+
         return False
 
-def load_json_file(filename):
-    try:
-        with open(filename, 'r') as f:
-            return json.load(f)
-    except Exception:
-        return []
+    def start_loop(self):
+        logger.info("Scheduler Started.")
+        if not self.users or not self.rules:
+            logger.error("Configuration missing. Exiting.")
+            return
 
-def main():
-    logger.info("--- Starting Scheduler Cycle ---")
+        while True:
+            now = datetime.now()
+            next_event = None # (open_time, class_time, rule)
 
-    # 1. Load Data
-    users = load_json_file("credentials.json")
-    rules = load_json_file("bookings.json")
-    
-    if not users or not rules:
-        logger.error("Missing credentials.json or bookings.json")
-        return
+            # 1. SCAN: Find nearest future rule (checking ALL sub-slots)
+            for rule in self.rules:
+                open_time, class_time = TimeUtils.get_next_opening_time(rule, now, BOOKING_DELAY_HOURS)
+                
+                # If a slot opened very recently (within buffer), we still want to attack it
+                if open_time < now - timedelta(seconds=ATTACK_START_BUFFER):
+                    # This specific slot missed, look ahead 1 week
+                    open_time += timedelta(days=7)
+                    class_time += timedelta(days=7)
+                    # Re-check biweekly logic
+                    if rule.get('biweekly') and not TimeUtils.is_biweekly_match(class_time, rule['anchor_date']):
+                        open_time += timedelta(days=7)
+                        class_time += timedelta(days=7)
 
-    # 2. Pre-login ALL users
-    # We do this once per cycle so we don't spam login inside the booking loop
-    active_agents = []
-    for user in users:
-        agent = BookingAgent(user)
-        if agent.login():
-            active_agents.append(agent)
-        else:
-            logger.warning(f"User {user.get('email')} failed to login. Skipping.")
-            
-    if not active_agents:
-        logger.error("No active users available. Exiting cycle.")
-        return
+                if next_event is None or open_time < next_event[0]:
+                    next_event = (open_time, class_time, rule)
 
-    # 3. Calculate Target Slot
-    now = datetime.now()
-    # We want to book 1 week ahead, but the slot opens 'delay' hours after real time.
-    target_slot_time = now + timedelta(days=7) - timedelta(hours=BOOKING_DELAY_HOURS)
-    
-    target_weekday = target_slot_time.weekday()
-    target_hour = target_slot_time.hour
-    
-    logger.info(f"Current Time: {now.strftime('%H:%M')}")
-    logger.info(f"Targeting Slot: {target_slot_time.strftime('%Y-%m-%d')} @ {target_hour}:00")
-
-    # 4. Check Rules
-    should_book = False
-    for rule in rules:
-        if rule['day_of_week'] != target_weekday:
-            continue
-        if not (rule['start_hour'] <= target_hour < rule['end_hour']):
-            continue
-        if rule.get('biweekly'):
-            if not is_biweekly_match(target_slot_time, rule['anchor_date']):
-                logger.info(f"Skipping bi-weekly rule (Week mismatch).")
+            if not next_event:
+                logger.error("No valid future rules found.")
+                time.sleep(60)
                 continue
-        
-        should_book = True
-        logger.info(f"Matched Rule: {rule.get('comment', 'Unnamed Rule')}")
-        break
 
-    if not should_book:
-        logger.info("No matching rules for this specific hour.")
-        return
+            target_open_time, target_class_time, target_rule = next_event
+            
+            # 2. WAIT
+            wait_seconds = (target_open_time - datetime.now()).total_seconds() - ATTACK_START_BUFFER
+            
+            logger.info(f"NEXT TARGET: {target_rule.get('comment')}")
+            logger.info(f"  -> Class Time:   {target_class_time}")
+            logger.info(f"  -> Booking Opens:{target_open_time}")
+            if self.preferred_room:
+                logger.info(f"  -> Preferred Room: {self.preferred_room}")
 
-    # 5. Attempt Booking (Nested Loop: Room -> Users)
-    start_utc, end_utc = get_utc_times(target_slot_time)
-    
-    booked_successfully = False
-    
-    for room_num in ROOM_PRIORITY_LIST:
-        resource_id = room_num + 10
-        logger.info(f"Trying Room {room_num}...")
-
-        # Try every user for this room
-        for agent in active_agents:
-            if agent.book_room(resource_id, start_utc, end_utc):
-                logger.info(f"SUCCESS! Booked Room {room_num} with User {agent.email}")
-                booked_successfully = True
-                break # Break user loop
+            if wait_seconds > 0:
+                logger.info(f"  -> Sleeping for {wait_seconds/60:.2f} minutes...")
+                time.sleep(wait_seconds)
             else:
-                logger.info(f"User {agent.email} failed for Room {room_num}. Trying next user...")
-        
-        if booked_successfully:
-            break # Break room loop
+                logger.info("  -> Target is imminent!")
+            
+            # 3. PREPARE
+            self.prepare_agents()
+            if not self.active_agents:
+                logger.error("No active agents. Sleeping 30s before retry.")
+                time.sleep(30)
+                continue
 
-    if not booked_successfully:
-        logger.error("All rooms and users failed for this slot.")
+            # 4. ATTACK
+            if self.run_attack(target_class_time):
+                logger.info("Booking successful. Cooling down for 5 minutes...")
+                time.sleep(300) 
+            else:
+                logger.warning("Attack window closed without success. Rescanning...")
+                time.sleep(10)
 
 if __name__ == "__main__":
-    while True:
-        try:
-            main()
-        except Exception as e:
-            logger.error(f"Critical Error in main loop: {e}")
-        
-        # Wait 30 seconds before retrying/polling
-        time.sleep(30)
+    bot = BookingScheduler()
+    bot.start_loop()
