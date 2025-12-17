@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 
 # --- Configuration ---
-# EXACT URL from your working script
 BASE_URL = "https://schedule.tau.ac.il/scilib/Web"
 LOGIN_URL = f"{BASE_URL}/index.php"
 BOOKING_URL = f"{BASE_URL}/api/reservation.php?action=create"
@@ -20,7 +19,6 @@ class BookingAgent:
         self.owner_id = user_data['owner_id']
         self.session = requests.Session()
         
-        # EXACT Headers from your working script
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
             "X-Requested-With": "XMLHttpRequest", 
@@ -29,7 +27,6 @@ class BookingAgent:
         })
 
     def _save_error_response(self, content):
-        """Saves response content to a file for debugging."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"error_{self.email}_{timestamp}.html"
         try:
@@ -42,12 +39,9 @@ class BookingAgent:
     def login(self):
         logger.info(f"[{self.email}] Logging in...")
         payload = {
-            "email": self.email,
-            "password": self.password,
-            "persistLogin": "on",
-            "login": "submit"
+            "email": self.email, "password": self.password,
+            "persistLogin": "on", "login": "submit"
         }
-        
         try:
             self.session.post(LOGIN_URL, data=payload)
             if "login_token" in self.session.cookies:
@@ -63,13 +57,10 @@ class BookingAgent:
     def get_csrf_token(self):
         try:
             response = self.session.get(f"{BASE_URL}/schedule.php")
-            
             match = re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', response.text)
             if match: return match.group(1)
-            
             match = re.search(r"CSRF_TOKEN\s*=\s*'([^']+)'", response.text)
             if match: return match.group(1)
-            
             logger.error(f"[{self.email}] CSRF Token not found.")
             return None
         except Exception as e:
@@ -77,11 +68,13 @@ class BookingAgent:
             return None
 
     def book_room(self, resource_id, start_utc, end_utc):
+        """
+        Returns True if booking was successful, False otherwise.
+        """
         csrf_token = self.get_csrf_token()
         if not csrf_token:
-            return
+            return False
 
-        # 1. Prepare JSON Payload (Exact structure from working script)
         reservation_data = {
             "reservation": {
                 "referenceNumber": None,
@@ -109,41 +102,41 @@ class BookingAgent:
         }
 
         json_payload = json.dumps(reservation_data)
-
-        # 2. Prepare Multipart Data
         multipart_data = {
             'request': (None, json_payload),
             'CSRF_TOKEN': (None, csrf_token),
             'BROWSER_TIMEZONE': (None, 'Asia/Jerusalem')
         }
 
-        # 3. Log Request Details
-        logger.info(f"[{self.email}] Sending POST to {BOOKING_URL}")
+        logger.info(f"[{self.email}] Attempting Room {resource_id-10} (ID: {resource_id})...")
 
         try:
-            # 4. Send Request
             response = self.session.post(BOOKING_URL, files=multipart_data)
-
-            logger.info(f"Status Code: {response.status_code}")
             
-            # --- LOGGING FULL RESPONSE ---
-            logger.info(f"[{self.email}] FULL SERVER RESPONSE:\n{response.text}\n")
-            # -----------------------------
-
-            # 5. Parse Response
+            # Parse Response
             try:
                 res_json = response.json()
-                if res_json.get("success") or res_json.get("data", {}).get("success"):
-                    if errors:=res_json.get("data").get("errors"):
-                        logger.error(f"[{self.email}] Booking Error: {errors}")
-                    else:
-                        logger.info(f"[{self.email}] SUCCESS!")
                 
+                # Check for success
+                if res_json.get("success") or res_json.get("data", {}).get("success"):
+                    # Double check for inner errors (sometimes success=true but errors exist)
+                    if errors := res_json.get("data", {}).get("errors"):
+                        logger.warning(f"[{self.email}] Room {resource_id-10} Unavailable: {errors}")
+                        return False # Return False to trigger retry
+                    else:
+                        ref = res_json.get("data", {}).get("referenceNumber", "Unknown")
+                        logger.info(f"[{self.email}] SUCCESS! Room {resource_id-10} booked. Ref: {ref}")
+                        return True
                 else:
-                    logger.warning(f"[{self.email}] Booking Failed (Server Logic).")
+                    # Logic failure (e.g., slot taken)
+                    logger.warning(f"[{self.email}] Room {resource_id-10} Failed: {res_json.get('msg') or res_json}")
+                    return False
+
             except json.JSONDecodeError:
-                logger.error(f"[{self.email}] Response was not JSON.")
+                logger.error(f"[{self.email}] Response was not JSON (Server Error).")
                 self._save_error_response(response.text)
+                return False
 
         except Exception as e:
             logger.error(f"[{self.email}] Network Request failed: {e}")
+            return False

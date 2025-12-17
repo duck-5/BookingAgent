@@ -1,16 +1,46 @@
 [
     {
-        "user_email": "yuvalmantin",
-        "room_number": 14,
-        "date": "2025-12-17",
-        "start_time": "08:00",
-        "end_time": "09:00"
+        "comment": "Every second Monday (from 22.12): 17-19",
+        "day_of_week": 0,
+        "start_hour": 17,
+        "end_hour": 19,
+        "biweekly": true,
+        "anchor_date": "2025-12-22"
     },
     {
-        "user_email": "kushnir2",
-        "room_number": 22,  
-        "date": "2025-12-18",
-        "start_time": "10:00",
-        "end_time": "11:30"
+        "comment": "Sunday: 14-17",
+        "day_of_week": 6,
+        "start_hour": 14,
+        "end_hour": 17
+    },
+    {
+        "comment": "Tuesday: 16-19",
+        "day_of_week": 1,
+        "start_hour": 15,
+        "end_hour": 19
+    },
+    {
+        "comment": "Wednesday: 12-14",
+        "day_of_week": 2,
+        "start_hour": 12,
+        "end_hour": 14
+    },
+    {
+        "comment": "Wednesday: 15-18",
+        "day_of_week": 2,
+        "start_hour": 15,
+        "end_hour": 18
+    },
+    {
+        "comment": "Thursday: 10-11",
+        "day_of_week": 3,
+        "start_hour": 10,
+        "end_hour": 11
+    },
+    {
+        "comment": "Thursday: 16-19",
+        "day_of_week": 3,
+        "start_hour": 16,
+        "end_hour": 19
     }
 ]
