@@ -1,11 +1,16 @@
 [
     {
-        "comment": "Every second Monday (from 22.12): 17-19",
+        "comment": "Before Lab (Mon 11-13)",
+        "day_of_week": 0,
+        "start_hour": 11,
+        "end_hour": 13,
+        "biweekly": false
+    },
+    {
+        "comment": "After Lab (Mon 17-19)",
         "day_of_week": 0,
         "start_hour": 17,
-        "end_hour": 19,
-        "biweekly": true,
-        "anchor_date": "2025-12-22"
+        "end_hour": 19
     },
     {
         "comment": "Sunday: 14-17",
