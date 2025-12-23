@@ -45,10 +45,9 @@ class BookingAgent:
         }
         try:
             resp = self.session.post(LOGIN_URL, data=payload)
-            logger.debug(f"[{self.email}] Login POST status: {resp.status_code}")
             
             if "login_token" in self.session.cookies:
-                logger.info(f"[{self.email}] Login successful. Cookies acquired.")
+                logger.info(f"[{self.email}] Login successful.")
                 return True
             
             logger.warning(f"[{self.email}] Login failed. Cookies: {self.session.cookies.get_dict()}")
@@ -59,20 +58,15 @@ class BookingAgent:
 
     def get_csrf_token(self):
         try:
-            logger.debug(f"[{self.email}] Fetching schedule page for CSRF...")
             response = self.session.get(f"{BASE_URL}/schedule.php")
             
             # Try input field
             match = re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', response.text)
-            if match: 
-                logger.debug(f"[{self.email}] CSRF found (Method 1).")
-                return match.group(1)
+            if match: return match.group(1)
             
             # Try JS variable
             match = re.search(r"CSRF_TOKEN\s*=\s*'([^']+)'", response.text)
-            if match: 
-                logger.debug(f"[{self.email}] CSRF found (Method 2).")
-                return match.group(1)
+            if match: return match.group(1)
             
             logger.error(f"[{self.email}] CSRF Token could not be found in page HTML.")
             return None
@@ -81,10 +75,16 @@ class BookingAgent:
             return None
 
     def book_room(self, resource_id, start_utc, end_utc):
-        """Returns True on success, False on failure."""
+        """
+        Returns:
+            "SUCCESS": Booking confirmed.
+            "ROOM_TAKEN": Conflicting reservations error.
+            "USER_LIMIT": User limit reached error.
+            "ERROR": General failure.
+        """
         csrf_token = self.get_csrf_token()
         if not csrf_token:
-            return False
+            return "ERROR"
 
         reservation_data = {
             "reservation": {
@@ -112,8 +112,10 @@ class BookingAgent:
             "updateScope": "full"
         }
 
-        # Debug log for the specific payload being sent
-        logger.debug(f"[{self.email}] Payload for Room {resource_id-10}: {json.dumps(reservation_data)}")
+        # --- LOGGING ROOM ATTEMPT ---
+        # resource_id 23 is room 13, etc.
+        room_number = resource_id - 10
+        logger.info(f"[{self.email}] Attempting: Room {room_number} (ID:{resource_id}) | UTC: {start_utc}")
 
         files = {
             'request': (None, json.dumps(reservation_data)),
@@ -123,31 +125,47 @@ class BookingAgent:
 
         try:
             response = self.session.post(BOOKING_URL, files=files)
-            logger.debug(f"[{self.email}] POST Response Code: {response.status_code}")
             
             try:
                 res_json = response.json()
                 
-                # Check for successful booking
+                # 1. Check Success
                 if res_json.get("success") or res_json.get("data", {}).get("success"):
                     # Check for hidden errors inside success message
                     if errors := res_json.get("data", {}).get("errors"):
-                        logger.warning(f"[{self.email}] Logic Failure: {errors}")
-                        return False 
+                        err_str = json.dumps(errors)
+                        logger.warning(f"[{self.email}] Logic Failure: {err_str}")
+                        
+                        if "conflicting reservations" in err_str:
+                            return "ROOM_TAKEN"
+                        if "limited to 1.00 reservations" in err_str:
+                            return "USER_LIMIT"
+                        return "ERROR"
                     
                     ref = res_json.get("data", {}).get("referenceNumber", "Unknown")
-                    logger.info(f"[{self.email}] SUCCESS! Room {resource_id-10} Booked. Ref: {ref}")
-                    return True
+                    logger.info(f"[{self.email}] SUCCESS! Room {room_number} Booked. Ref: {ref}")
+                    return "SUCCESS"
                 
-                # Log failure reason
+                # 2. Check Specific Failure Messages
+                full_resp_str = json.dumps(res_json)
+                
+                if "conflicting reservations" in full_resp_str:
+                    logger.warning(f"[{self.email}] Room {room_number} is TAKEN (Conflicting Reservation).")
+                    return "ROOM_TAKEN"
+                
+                if "limited to 1.00 reservations" in full_resp_str:
+                    logger.warning(f"[{self.email}] User hit DAILY LIMIT.")
+                    return "USER_LIMIT"
+
+                # Log generic failure
                 msg = res_json.get("msg") or res_json.get("message") or "Unknown Server Error"
                 logger.info(f"[{self.email}] Failed: {msg}")
-                return False
+                return "ERROR"
 
             except json.JSONDecodeError:
                 logger.error(f"[{self.email}] Response was not JSON. Saving debug file.")
                 self._save_error_response(response.text)
-                return False
+                return "ERROR"
         except Exception as e:
             logger.error(f"[{self.email}] Booking Request Exception: {e}")
-            return False
+            return "ERROR"

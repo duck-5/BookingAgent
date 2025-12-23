@@ -28,8 +28,6 @@ class HistoryManager:
             logger.error(f"Failed to save history: {e}")
 
     def is_booked(self, class_time):
-        """Checks if a specific class time is already in history."""
-        # Compare strings to avoid timezone headaches
         time_str = class_time.strftime("%Y-%m-%d %H:%M")
         for record in self.history:
             if record.get('class_time') == time_str:
@@ -37,7 +35,6 @@ class HistoryManager:
         return False
 
     def add_booking(self, class_time, room_num, email):
-        """Adds a successful booking to history."""
         record = {
             "class_time": class_time.strftime("%Y-%m-%d %H:%M"),
             "room": room_num,
@@ -49,30 +46,25 @@ class HistoryManager:
         logger.info(f"Recorded booking for {record['class_time']} in history file.")
 
     def clean_history(self):
-        """Removes bookings that have already passed."""
         now = datetime.now()
         original_count = len(self.history)
-        
         valid_history = []
         for rec in self.history:
             try:
-                # Parse the saved time
                 dt = datetime.strptime(rec['class_time'], "%Y-%m-%d %H:%M")
-                # Keep if the class is in the future
                 if dt > now:
                     valid_history.append(rec)
             except ValueError:
-                pass # Remove corrupt records
-        
+                pass 
         self.history = valid_history
         if len(self.history) < original_count:
             self._save()
-            logger.info(f"Cleaned {original_count - len(self.history)} old records from history.")
 
 class TimeUtils:
     @staticmethod
     def get_utc_times(target_class_datetime):
         """Local Time -> UTC (Israel Winter -2)"""
+        # 11:00 Local -> 09:00 UTC (Direct conversion)
         base_dt = target_class_datetime.replace(minute=0, second=0, microsecond=0)
         start_utc = base_dt - timedelta(hours=2)
         end_utc = start_utc + timedelta(hours=1)
@@ -93,14 +85,10 @@ class TimeUtils:
 
     @staticmethod
     def get_next_opening_time(rule, now, history_manager, booking_delay_hours=1):
-        """
-        Scans rule hours and returns the nearest opening time that isn't already booked.
-        """
         booking_weekday = rule['day_of_week']
         best_open_time = None
         best_class_time = None
 
-        # Iterate through EACH hour in the rule (e.g. 17, 18)
         for h in range(rule['start_hour'], rule['end_hour']):
             booking_hour = h + booking_delay_hours
             days_offset = 0
@@ -108,7 +96,6 @@ class TimeUtils:
                 booking_hour -= 24
                 days_offset = 1
 
-            # Find next occurrence
             days_ahead = (booking_weekday - now.weekday() + 7) % 7
             candidate_open = now.replace(hour=booking_hour, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
             candidate_open += timedelta(days=days_offset)
@@ -116,10 +103,9 @@ class TimeUtils:
             if candidate_open <= now:
                 candidate_open += timedelta(days=7)
 
-            # Calculate actual class time
+            # Class time is 7 days after the *base* booking time logic
             class_time = candidate_open - timedelta(hours=booking_delay_hours) + timedelta(days=7)
 
-            # Check Bi-weekly
             if rule.get('biweekly'):
                 for _ in range(4):
                     if TimeUtils.is_biweekly_match(class_time, rule['anchor_date']):
@@ -127,14 +113,9 @@ class TimeUtils:
                     candidate_open += timedelta(days=7)
                     class_time += timedelta(days=7)
 
-            # --- CHECK HISTORY ---
-            # If this specific slot is already successfully booked, skip it!
             if history_manager.is_booked(class_time):
-                # logger.debug(f"Skipping {class_time} (Already in history).")
                 continue
-            # ---------------------
             
-            # Select the nearest valid one
             if best_open_time is None or candidate_open < best_open_time:
                 best_open_time = candidate_open
                 best_class_time = class_time
