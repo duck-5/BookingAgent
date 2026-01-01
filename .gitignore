@@ -3,3 +3,16 @@ booking_history.json
 *.html
 *.log
 __pycache__/
+booking_history.json
+build/
+dist/
+*.pyc
+*.tmp
+*.bak
+*.swp
+*.swo
+*.DS_Store
+*.idea/
+*.vscode/
+*.exe
+*.spec
