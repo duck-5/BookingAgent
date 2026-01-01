@@ -28,6 +28,7 @@ class HistoryManager:
             logger.error(f"Failed to save history: {e}")
 
     def is_booked(self, class_time):
+        """Checks if a specific class time is already in history."""
         time_str = class_time.strftime("%Y-%m-%d %H:%M")
         for record in self.history:
             if record.get('class_time') == time_str:
@@ -35,6 +36,7 @@ class HistoryManager:
         return False
 
     def add_booking(self, class_time, room_num, email):
+        """Adds a successful booking to history."""
         record = {
             "class_time": class_time.strftime("%Y-%m-%d %H:%M"),
             "room": room_num,
@@ -46,8 +48,10 @@ class HistoryManager:
         logger.info(f"Recorded booking for {record['class_time']} in history file.")
 
     def clean_history(self):
+        """Removes bookings that have already passed."""
         now = datetime.now()
         original_count = len(self.history)
+        
         valid_history = []
         for rec in self.history:
             try:
@@ -56,15 +60,16 @@ class HistoryManager:
                     valid_history.append(rec)
             except ValueError:
                 pass 
+        
         self.history = valid_history
         if len(self.history) < original_count:
             self._save()
+            logger.info(f"Cleaned {original_count - len(self.history)} old records from history.")
 
 class TimeUtils:
     @staticmethod
     def get_utc_times(target_class_datetime):
         """Local Time -> UTC (Israel Winter -2)"""
-        # 11:00 Local -> 09:00 UTC (Direct conversion)
         base_dt = target_class_datetime.replace(minute=0, second=0, microsecond=0)
         start_utc = base_dt - timedelta(hours=2)
         end_utc = start_utc + timedelta(hours=1)
@@ -85,9 +90,14 @@ class TimeUtils:
 
     @staticmethod
     def get_next_opening_time(rule, now, history_manager, booking_delay_hours=1):
+        """
+        Scans rule hours.
+        1. Checks for MISSED slots (past opening time, future class time, not booked).
+        2. Checks for FUTURE slots.
+        Returns: (opening_time, target_class_time, is_missed_retry)
+        """
         booking_weekday = rule['day_of_week']
-        best_open_time = None
-        best_class_time = None
+        best_event = None # (open_time, class_time, is_missed)
 
         for h in range(rule['start_hour'], rule['end_hour']):
             booking_hour = h + booking_delay_hours
@@ -96,31 +106,49 @@ class TimeUtils:
                 booking_hour -= 24
                 days_offset = 1
 
+            # Logic to find the RECENT past or NEAR future
             days_ahead = (booking_weekday - now.weekday() + 7) % 7
-            candidate_open = now.replace(hour=booking_hour, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-            candidate_open += timedelta(days=days_offset)
             
-            if candidate_open <= now:
-                candidate_open += timedelta(days=7)
-
-            # Class time is 7 days after the *base* booking time logic
-            class_time = candidate_open - timedelta(hours=booking_delay_hours) + timedelta(days=7)
-
-            if rule.get('biweekly'):
-                for _ in range(4):
-                    if TimeUtils.is_biweekly_match(class_time, rule['anchor_date']):
-                        break
-                    candidate_open += timedelta(days=7)
-                    class_time += timedelta(days=7)
-
-            if history_manager.is_booked(class_time):
-                continue
+            # Start checking from 1 week ago (to catch missed slots)
+            base_candidate = now.replace(hour=booking_hour, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead) - timedelta(days=7) 
             
-            if best_open_time is None or candidate_open < best_open_time:
-                best_open_time = candidate_open
-                best_class_time = class_time
+            # Check last week, this week, next week
+            for w in range(3): 
+                candidate_open = base_candidate + timedelta(days=w*7) + timedelta(days=days_offset)
+                class_time = candidate_open - timedelta(hours=booking_delay_hours) + timedelta(days=7)
+
+                # Skip if class is in the past
+                if class_time <= now:
+                    continue
+
+                # Check Bi-weekly
+                if rule.get('biweekly') and not TimeUtils.is_biweekly_match(class_time, rule['anchor_date']):
+                    continue
+
+                # Check History
+                if history_manager.is_booked(class_time):
+                    continue
+
+                # Categorize
+                is_missed = False
+                if candidate_open < now:
+                    is_missed = True
                 
-        return best_open_time, best_class_time
+                current_event = (candidate_open, class_time, is_missed)
+                
+                if best_event is None:
+                    best_event = current_event
+                else:
+                    best_open, _, best_is_missed = best_event
+                    
+                    # Prioritize Missed slots over Future slots
+                    if is_missed and not best_is_missed:
+                        best_event = current_event
+                    # If both are same type, pick the earlier one
+                    elif (is_missed == best_is_missed) and (candidate_open < best_open):
+                        best_event = current_event
+                
+        return best_event
 
 class ConfigLoader:
     @staticmethod

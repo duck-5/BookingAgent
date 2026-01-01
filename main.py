@@ -7,8 +7,7 @@ from booking_agent import BookingAgent
 from booking_utils import TimeUtils, ConfigLoader, HistoryManager
 
 # --- CONFIGURATION ---
-ROOM_PRIORITY_LIST = [108+7, 109+7, 110+7] # Example: Room 115, 116, 117
-# ROOM_PRIORITY_LIST = [13, 14, 15, 16, 17, 18, 19]
+ROOM_PRIORITY_LIST = [108+7, 109+7, 110+7] #, 13, 14, 15, 16]
 
 BOOKING_DELAY_HOURS = 1 
 ATTACK_START_BUFFER = 60
@@ -56,7 +55,6 @@ class BookingScheduler:
         valid_rooms = self.get_room_order().copy()
         valid_agents = self.active_agents.copy()
         
-        # IMPROVED LOGGING: Full Date
         logger.info(f"--- ATTACK STARTED for {target_class_time.strftime('%Y-%m-%d %H:%M')} ---")
 
         while (datetime.now() - attack_start).total_seconds() < MAX_ATTACK_DURATION:
@@ -130,42 +128,66 @@ class BookingScheduler:
 
             # 1. SCAN
             for rule in self.rules:
-                open_time, class_time = TimeUtils.get_next_opening_time(
+                # Expecting 3 values now
+                res = TimeUtils.get_next_opening_time(
                     rule, now, self.history, BOOKING_DELAY_HOURS
                 )
+                if not res: continue
                 
-                if not open_time:
+                open_time, class_time, is_missed = res
+                
+                # If it's NOT missed, verify it's close enough to wait for
+                if not is_missed and open_time < now - timedelta(seconds=ATTACK_START_BUFFER):
                     continue
 
-                if open_time < now - timedelta(seconds=ATTACK_START_BUFFER):
-                    continue
+                # Create event tuple
+                current = (open_time, class_time, rule, is_missed)
 
-                if next_event is None or open_time < next_event[0]:
-                    next_event = (open_time, class_time, rule)
+                if next_event is None:
+                    next_event = current
+                else:
+                    _, _, _, best_missed = next_event
+                    # Prioritize Missed slots over Future slots
+                    if is_missed and not best_missed:
+                        next_event = current
+                    elif (is_missed == best_missed) and (open_time < next_event[0]):
+                        next_event = current
 
             if not next_event:
-                logger.info("No unbooked future slots found. Waiting 60s...")
+                logger.info("No unbooked slots found (Missed or Future). Waiting 60s...")
                 time.sleep(60)
                 continue
 
-            target_open_time, target_class_time, target_rule = next_event
+            target_open, target_class, target_rule, is_missed = next_event
             
-            # 2. WAIT
-            wait_seconds = (target_open_time - datetime.now()).total_seconds() - ATTACK_START_BUFFER
-            
-            # IMPROVED LOGGING: Full Date
+            # 2. LOGIC BRANCH
+            if is_missed:
+                logger.info(f"FOUND MISSED BOOKING: {target_rule.get('comment')} @ {target_class.strftime('%Y-%m-%d %H:%M')}")
+                logger.info("Attempting immediate retry...")
+                self.prepare_agents()
+                if self.active_agents:
+                    # Run logic immediately
+                    self.run_attack(target_class)
+                else:
+                    logger.error("No agents for missed retry.")
+                
+                # Pause briefly to prevent CPU spinning if it keeps failing
+                time.sleep(5)
+                continue 
+
+            # Future Booking Logic
+            wait_seconds = (target_open - datetime.now()).total_seconds() - ATTACK_START_BUFFER
             logger.info(f"NEXT TARGET: {target_rule.get('comment')}")
-            logger.info(f"  -> Class Time:   {target_class_time.strftime('%Y-%m-%d %H:%M')}")
-            logger.info(f"  -> Booking Opens:{target_open_time.strftime('%Y-%m-%d %H:%M')}")
+            logger.info(f"  -> Class Time:   {target_class.strftime('%Y-%m-%d %H:%M')}")
+            logger.info(f"  -> Booking Opens:{target_open.strftime('%Y-%m-%d %H:%M')}")
             
             if wait_seconds > 0:
                 logger.info(f"  -> Sleeping for {wait_seconds/60:.2f} minutes...")
                 time.sleep(wait_seconds)
             
-            # 3. ATTACK
             self.prepare_agents()
             if self.active_agents:
-                if self.run_attack(target_class_time):
+                if self.run_attack(target_class):
                     logger.info("Booking successful. Cooling down...")
                     time.sleep(300) 
                 else:
