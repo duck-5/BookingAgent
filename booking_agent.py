@@ -15,7 +15,6 @@ class BookingAgent:
         self.password = user_data['password']
         self.owner_id = user_data['owner_id']
         self.session = requests.Session()
-        
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
             "X-Requested-With": "XMLHttpRequest", 
@@ -27,7 +26,7 @@ class BookingAgent:
     def login(self):
         try:
             payload = { "email": self.email, "password": self.password, "persistLogin": "on", "login": "submit" }
-            resp = self.session.post(self.LOGIN_URL, data=payload, allow_redirects=True)
+            self.session.post(self.LOGIN_URL, data=payload, allow_redirects=True)
             if "login_token" in self.session.cookies or "PHPSESSID" in self.session.cookies:
                 self.is_logged_in = True
                 return True
@@ -36,78 +35,52 @@ class BookingAgent:
 
     def get_csrf_token(self):
         try:
-            resp = self.session.get(f"{self.BASE_URL}/schedule.php")
-            html = resp.text
-            if match := re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', html): return match.group(1)
-            if match := re.search(r"CSRF_TOKEN\s*=\s*['\"]([^'\"]+)['\"]", html): return match.group(1)
+            # Fast scan of text
+            t = self.session.get(f"{self.BASE_URL}/schedule.php").text
+            if m := re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', t): return m.group(1)
+            if m := re.search(r"CSRF_TOKEN\s*=\s*['\"]([^'\"]+)['\"]", t): return m.group(1)
             return None
         except: return None
 
-    def book_room(self, resource_id, start_utc, end_utc, retry=True):
-        if not self.is_logged_in:
-            if not self.login(): return "ERROR"
-
+    def book_room(self, resource_id, start_utc, end_utc):
+        if not self.is_logged_in: self.login()
         csrf = self.get_csrf_token()
         if not csrf: return "ERROR"
 
-        reservation_data = {
+        data = {
             "reservation": {
                 "ownerId": self.owner_id, "resourceIds": [resource_id],
                 "title": "Study", "description": "AutoBook",
-                "start": start_utc, "end": end_utc, # Using UTC strings passed from scheduler
+                "start": start_utc, "end": end_utc,
                 "recurrence": { "type": "none", "interval": 1, "weekdays": None, "monthlyType": None, "weekOfMonth": None, "terminationDate": None, "repeatDates": [] },
                 "startReminder": None, "endReminder": None, "inviteeIds": [], "coOwnerIds": [], "participantIds": [], "guestEmails": [], "participantEmails": [], "allowSelfJoin": False, "attachments": [], "requiresApproval": False, "checkinDate": None, "checkoutDate": None, "termsAcceptedDate": None, "attributeValues": [], "meetingLink": None, "displayColor": None
             },
-            "retryParameters": [],
             "updateScope": "full"
         }
 
         files = {
-            'request': (None, json.dumps(reservation_data)),
+            'request': (None, json.dumps(data)),
             'CSRF_TOKEN': (None, csrf),
             'BROWSER_TIMEZONE': (None, 'Asia/Jerusalem')
         }
 
-        # Log UTC time for verification
-        time_display = start_utc.split('T')[1][:8]
-        logger.info(f"   [REQ] {self.email} -> Room {resource_id} @ {time_display} (UTC)")
-
         try:
-            response = self.session.post(self.BOOKING_URL, files=files)
-            
+            r = self.session.post(self.BOOKING_URL, files=files)
             try:
-                res = response.json()
+                res = r.json()
                 if res.get("success") or res.get("data", {}).get("success"):
-                    if errs := res.get("data", {}).get("errors"):
-                        s = json.dumps(errs)
-                        if "conflicting" in s: 
-                            logger.info(f"   [RES] {self.email} <- ROOM_TAKEN")
-                            return "ROOM_TAKEN"
-                        if "limited" in s: 
-                            logger.info(f"   [RES] {self.email} <- USER_LIMIT")
-                            return "USER_LIMIT"
-                        logger.info(f"   [RES] {self.email} <- LOGIC ERROR: {s}")
+                    if err := res.get("data", {}).get("errors"):
+                        s = json.dumps(err)
+                        if "conflicting" in s: return "ROOM_TAKEN"
+                        if "limited" in s: return "USER_LIMIT"
                         return "ERROR"
-                    logger.info(f"   [RES] {self.email} <- SUCCESS")
                     return "SUCCESS"
                 
                 s = json.dumps(res)
-                if "conflicting" in s: 
-                    logger.info(f"   [RES] {self.email} <- ROOM_TAKEN")
-                    return "ROOM_TAKEN"
-                if "limited" in s: 
-                    logger.info(f"   [RES] {self.email} <- USER_LIMIT")
-                    return "USER_LIMIT"
-                
-                logger.info(f"   [RES] {self.email} <- ERROR (Server Msg)")
+                if "conflicting" in s: return "ROOM_TAKEN"
+                if "limited" in s: return "USER_LIMIT"
                 return "ERROR"
-
-            except json.JSONDecodeError:
-                if retry:
-                    logger.info(f"   [RETRY] Session expired. Relogging...")
-                    if self.login():
-                        return self.book_room(resource_id, start_utc, end_utc, retry=False)
-                return "ERROR"
-        except Exception as e:
-            logger.error(f"   [RES] {self.email} <- NETWORK ERROR: {e}")
+            except:
+                return "ERROR" # HTML response = likely error
+        except:
             return "ERROR"
