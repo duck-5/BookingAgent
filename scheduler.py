@@ -47,11 +47,9 @@ class Scheduler:
         We strictly look for slots opening SOON or NOW.
         """
         now = datetime.now()
-        # Horizon: We are willing to book slots up to 7 days ahead
-        # But crucially, we need to know WHEN they open.
-        # Open Time = Slot Start Time - 7 Days + 1 Hour.
         
         candidates = []
+        # Reload history to ensure we see the failures we just wrote
         self.history = self._load_json(config.HISTORY_FILE, [])
         bookings = self._load_json(config.BOOKINGS_FILE, [])
 
@@ -62,29 +60,23 @@ class Scheduler:
             delta_days = day_diff + 7
             target_date = (now + timedelta(days=delta_days)).date()
             
-            # Ignore if it's less than 7 days away (e.g. "Next Wed" when today is "Thu")
+            # Ignore if it's less than 7 days away
             days_gap = (target_date - now.date()).days
             if days_gap < 7: continue
 
             for h in range(req['start_hour'], req['end_hour']):
                 slot_start = datetime.combine(target_date, datetime.min.time()).replace(hour=h)
                 
-                # Logic to convert to Israel time -> UTC-2 for API
-                # IMPORTANT: API expects UTC time. Israel Winter is UTC+2.
+                # UTC logic
                 utc_start = (slot_start - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
                 utc_end = (slot_start + timedelta(hours=1) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
                 
-                # Calculate Opening Time
-                # A slot at T opens at (T - 7 days + 1 hour)
-                # Correction: Based on your input, "13:10 -> 12:00 available".
-                # Means: Slot T available if Now >= T - 7days + 1hour?
-                # No, your example was: "Thu 13:10, last avail is Thu 12:00".
-                # This means Slot 13:00 (Next Thu) opens at 14:00 (This Thu).
-                # Formula: Opening Time = Slot_Start - 7 Days + 1 Hour.
-                
+                # Opening Time: T - 7 Days + 1 Hour
                 opening_time = slot_start - timedelta(days=7) + timedelta(hours=1)
                 
                 slot_key = slot_start.strftime("%Y-%m-%d %H:%M")
+                
+                # CHECK HISTORY: This will now filter out "FAILED" slots too
                 if any(x['slot_key'] == slot_key for x in self.history): continue
 
                 candidates.append({
@@ -100,7 +92,6 @@ class Scheduler:
         
         if not candidates: return None, 0
 
-        # Return the first candidate and seconds until it opens
         target = candidates[0]
         seconds_until_open = (target['opening_time'] - now).total_seconds()
         
@@ -116,39 +107,88 @@ class Scheduler:
         ]
         
         # 2. ORGANIZE USERS
-        # Put the user who booked the last slot at the front of the line
         active_agents = list(self.agents) # shallow copy
         if self.last_successful_user:
-            # Find agent object
             priority_agent = next((a for a in active_agents if a.email == self.last_successful_user), None)
             if priority_agent:
                 active_agents.remove(priority_agent)
-                active_agents.insert(0, priority_agent) # Move to front
+                active_agents.insert(0, priority_agent)
 
         # --- RETRY LOOP (For Sniping) ---
-        # We try this whole block. If it fails due to "Not Open Yet", we loop.
         start_time = time.time()
         
         while True:
-            # Timeout check (don't loop forever, max 2 minutes of trying)
+            # --- TIMEOUT / GIVE UP LOGIC ---
             if time.time() - start_time > 120:
-                logger.info("   [TIMEOUT] Gave up on slot.")
+                logger.info(f"   [TIMEOUT] Could not book {slot['key']} within 2 mins.")
+                
+                # SAVE FAILURE RECORD
+                self._save_history({
+                    "slot_key": slot['key'],
+                    "status": "FAILED",
+                    "reason": "Timeout",
+                    "timestamp": datetime.now().isoformat()
+                })
                 return False
 
             for batch_name, rooms in zip(["HIGH", "LOW"], room_batches):
                 for rid in rooms:
+                    rname = config.ALL_ROOMS[rid]
+                    
                     for agent in active_agents:
                         if agent.email in exhausted_emails: continue
 
-                        # logger.info(f"   [TRY] {batch_name} Room {rid} -> {agent.email}")
-                        res = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
+                        # CHECK FOR CONSECUTIVE BOOKING
+                        # Search logic: Same User, Same Room, EndTime == New StartTime
+                        prev_booking = None
+                        for h in self.history:
+                            if (h.get('user') == agent.email and 
+                                h.get('room') == rname and 
+                                h.get('end_utc') == slot['utc_start'] and
+                                h.get('status') == 'SUCCESS' and
+                                h.get('ref_num')):
+                                prev_booking = h
+                                break
+                        
+                        res = "ERROR"
+                        ref_num = None
+
+                        if prev_booking:
+                            # ATTEMPT EXTENSION
+                            original_start = prev_booking.get('start_utc', slot['utc_start']) # Fallback if missing? Should not happen if history is good.
+                            # If history is missing start_utc, we might have an issue. 
+                            # But if end_utc matched, it must have been a valid record.
+                            # IMPORTANT: If 'start_utc' is missing from old records, we can't extend reliably.
+                            # We'll assume new records have it. If missing, maybe fallback to book_room?
+                            if not original_start:
+                                logger.warning(f"Found consecutive booking for {agent.email} but missing start_utc. Fallback to create.")
+                                res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
+                            else:
+                                logger.info(f"   [EXTENDING] {agent.email} in {rname} (Ref: {prev_booking['ref_num']})")
+                                res, ref_num = agent.extend_booking(rid, prev_booking['ref_num'], original_start, slot['utc_end'])
+                                
+                                # If Extension failed due to limit or generic error, try Creating New?
+                                # User says: "If the user can't schedual anymore, then a new event needs to be created."
+                                # "can't schedule anymore" implies USER_LIMIT. But creating new would also hit USER_LIMIT?
+                                # Unless the limit is per-reservation duration.
+                                if res != "SUCCESS":
+                                    logger.info(f"   [EXTENSION FAILED] {res}. Retrying as new booking.")
+                                    res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
+                        else:
+                            # CREATE NEW
+                            res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
 
                         if res == "SUCCESS":
-                            rname = config.ALL_ROOMS[rid]
-                            logger.info(f"   [SUCCESS] {slot['key']} | {rname} | {agent.email}")
+                            display_start = prev_booking.get('start_utc', slot['utc_start']) if (prev_booking and ref_num == prev_booking['ref_num']) else slot['utc_start']
+                            
+                            logger.info(f"   [SUCCESS] {slot['key']} | {rname} | {agent.email} | Ref: {ref_num}")
                             self._save_history({
                                 "slot_key": slot['key'], "room": rname, 
-                                "user": agent.email, "booked_at": datetime.now().isoformat()
+                                "user": agent.email, "status": "SUCCESS",
+                                "booked_at": datetime.now().isoformat(),
+                                "ref_num": ref_num,
+                                "start_utc": display_start, # Track the orginal start
+                                "end_utc": slot['utc_end']  # Track where we ended up
                             })
                             self.last_successful_user = agent.email
                             return True
@@ -159,15 +199,25 @@ class Scheduler:
                         elif res == "ROOM_TAKEN":
                             break # Agent valid, Room dead. Next Room.
                         
-                        # If ERROR, we assume it *might* be "Not Open Yet" or Server Error.
-                        # We continue iterating through rooms/users, but we stay in the While Loop.
+                        elif res == "TOO_EARLY":
+                            # No point rotating users or rooms, the Window isn't open.
+                            # We break out of agent loop (to sleep) but DON'T mark failed.
+                            logger.warning(f"   [TOO EARLY] Window not open yet for {slot['key']}. Retrying...")
+                            break
 
-            # If we went through all Rooms and all Users and didn't succeed:
+            # --- ALL USERS EXHAUSTED LOGIC ---
             if len(exhausted_emails) == len(self.agents):
-                logger.warning("   [FAILED] All users exhausted limit.")
+                logger.warning(f"   [FAILED] All users exhausted limit for {slot['key']}.")
+                
+                # SAVE FAILURE RECORD
+                self._save_history({
+                    "slot_key": slot['key'],
+                    "status": "FAILED",
+                    "reason": "Users Exhausted",
+                    "timestamp": datetime.now().isoformat()
+                })
                 return False
             
-            # If we are here, it means we failed but have users left. 
             # Likely "Not Open Yet". Sleep tiny bit and Retry.
             time.sleep(0.5)
 
@@ -180,10 +230,6 @@ class Scheduler:
                 time.sleep(600)
                 continue
 
-            # LOGIC:
-            # If > 60 seconds away: Sleep until 60s before.
-            # If <= 60 seconds away: WAKE UP, Login, Start Spamming.
-            
             if seconds_wait > 60:
                 sleep_time = seconds_wait - 60
                 wake_time = datetime.now() + timedelta(seconds=sleep_time)
@@ -194,11 +240,10 @@ class Scheduler:
             # WAKE UP SEQUENCE
             logger.info(f"--- PREPARING FOR: {target['key']} ---")
             
-            # 1. Re-Verify Login (Multithreaded)
+            # 1. Re-Verify Login
             self.initialize_agents()
             
-            # 2. Wait exactly for opening time (minus 2 seconds offset for latency)
-            # Actually, better to start spamming 5 seconds early.
+            # 2. Wait exactly for opening time
             final_wait = (target['opening_time'] - datetime.now()).total_seconds() - 5
             if final_wait > 0:
                 time.sleep(final_wait)

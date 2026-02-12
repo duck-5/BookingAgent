@@ -64,12 +64,16 @@ def test_book_room_success(agent, mock_session):
     with patch.object(agent, 'get_csrf_token', return_value="fake_token"):
             # Mock successful booking response
         mock_response = MagicMock()
-        mock_response.json.return_value = {"success": True}
+        mock_response.json.return_value = {
+            "success": True,
+            "data": {"referenceNumber": "123456"}
+        }
         mock_session.post.return_value = mock_response
 
-        result = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert result == "SUCCESS"
+        assert status == "SUCCESS"
+        assert ref == "123456"
 
 def test_book_room_failure(agent, mock_session):
     agent.is_logged_in = True
@@ -80,9 +84,10 @@ def test_book_room_failure(agent, mock_session):
         mock_response.json.return_value = {"success": False}
         mock_session.post.return_value = mock_response
 
-        result = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert result == "ERROR"
+        assert status == "ERROR"
+        assert ref is None
 
 def test_book_room_room_taken(agent, mock_session):
     agent.is_logged_in = True
@@ -96,9 +101,10 @@ def test_book_room_room_taken(agent, mock_session):
         }
         mock_session.post.return_value = mock_response
 
-        result = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert result == "ROOM_TAKEN"
+        assert status == "ROOM_TAKEN"
+        assert ref is None
 
 def test_book_room_user_limit(agent, mock_session):
     agent.is_logged_in = True
@@ -112,7 +118,8 @@ def test_book_room_user_limit(agent, mock_session):
         }
         mock_session.post.return_value = mock_response
 
-        result = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert result == "USER_LIMIT"
+        assert status == "USER_LIMIT"
+        assert ref is None
 

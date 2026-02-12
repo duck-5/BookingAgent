@@ -74,7 +74,7 @@ def test_attempt_booking_success(mock_datetime, scheduler):
     
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
-    mock_agent.book_room.return_value = "SUCCESS"
+    mock_agent.book_room.return_value = ("SUCCESS", "REF123")
     
     scheduler.agents = [mock_agent]
     scheduler.last_successful_user = None
@@ -100,7 +100,7 @@ def test_attempt_booking_exhausted(mock_datetime, scheduler):
     
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
-    mock_agent.book_room.return_value = "USER_LIMIT"
+    mock_agent.book_room.return_value = ("USER_LIMIT", None)
     
     scheduler.agents = [mock_agent]
     
@@ -125,7 +125,7 @@ def test_attempt_booking_timeout(mock_datetime, scheduler):
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
     # Simulate room taken repeatedly
-    mock_agent.book_room.return_value = "ROOM_TAKEN"
+    mock_agent.book_room.return_value = ("ROOM_TAKEN", None)
     
     scheduler.agents = [mock_agent]
     

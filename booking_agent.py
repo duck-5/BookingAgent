@@ -45,7 +45,7 @@ class BookingAgent:
     def book_room(self, resource_id, start_utc, end_utc):
         if not self.is_logged_in: self.login()
         csrf = self.get_csrf_token()
-        if not csrf: return "ERROR"
+        if not csrf: return "ERROR", None
 
         data = {
             "reservation": {
@@ -71,16 +71,70 @@ class BookingAgent:
                 if res.get("success") or res.get("data", {}).get("success"):
                     if err := res.get("data", {}).get("errors"):
                         s = json.dumps(err)
-                        if "conflicting" in s: return "ROOM_TAKEN"
-                        if "limited" in s: return "USER_LIMIT"
-                        return "ERROR"
-                    return "SUCCESS"
+                        if "conflicting" in s: return "ROOM_TAKEN", None
+                        if "limited" in s: return "USER_LIMIT", None
+                        if "this far in the future" in s: return "TOO_EARLY", None
+                        logger.error(f"Booking Error (Success=True but has errors): {s}") # Log unexpected errors
+                        return "ERROR", None
+                    
+                    ref_num = res.get("data", {}).get("referenceNumber")
+                    return "SUCCESS", ref_num
                 
+                # --- FAILURE CASE ---
                 s = json.dumps(res)
-                if "conflicting" in s: return "ROOM_TAKEN"
-                if "limited" in s: return "USER_LIMIT"
-                return "ERROR"
+                if "conflicting" in s: return "ROOM_TAKEN", None
+                if "limited" in s: return "USER_LIMIT", None
+                if "this far in the future" in s: return "TOO_EARLY", None
+                logger.error(f"Booking Failed: {s}") # Log the full response for debugging
+                return "ERROR", None
             except:
-                return "ERROR" # HTML response = likely error
+                return "ERROR", None # HTML response = likely error
         except:
-            return "ERROR"
+            return "ERROR", None
+
+    def extend_booking(self, resource_id, ref_num, original_start_utc, new_end_utc):
+        if not self.is_logged_in: self.login()
+        csrf = self.get_csrf_token()
+        if not csrf: return "ERROR", None
+
+        # Build update URL explicitly or reuse base
+        update_url = f"{self.BASE_URL}/api/reservation.php?action=update"
+
+        data = {
+            "reservation": {
+                "referenceNumber": ref_num,
+                "ownerId": self.owner_id, "resourceIds": [resource_id],
+                "title": "", "description": "", # Empty per user example
+                "start": original_start_utc, "end": new_end_utc,
+                "recurrence": { "type": "none", "interval": 1, "weekdays": None, "monthlyType": None, "weekOfMonth": None, "terminationDate": None, "repeatDates": [] },
+                "startReminder": None, "endReminder": None, "inviteeIds": [], "coOwnerIds": [], "participantIds": [], "guestEmails": [], "participantEmails": [], "allowSelfJoin": False, "attachments": [], "requiresApproval": False, "checkinDate": None, "checkoutDate": None, "termsAcceptedDate": None, "attributeValues": [], "meetingLink": None, "displayColor": None
+            },
+            "updateScope": "full",
+            "retryParameters": []
+        }
+
+        files = {
+            'request': (None, json.dumps(data)),
+            'CSRF_TOKEN': (None, csrf),
+            'BROWSER_TIMEZONE': (None, 'Asia/Jerusalem')
+        }
+
+        try:
+            r = self.session.post(update_url, files=files)
+            try:
+                res = r.json()
+                # Check explicitly for failures
+                if not res.get("success") and not res.get("data", {}).get("success"):
+                     # If updated failed, we might want to return specific errors
+                     s = json.dumps(res)
+                     if "limited" in s: return "USER_LIMIT", None
+                     if "conflicting" in s: return "ROOM_TAKEN", None
+                     if "this far in the future" in s: return "TOO_EARLY", None
+                     return "ERROR", None
+                     
+                ref = res.get("data", {}).get("referenceNumber", ref_num)
+                return "SUCCESS", ref
+            except:
+                return "ERROR", None
+        except:
+            return "ERROR", None
