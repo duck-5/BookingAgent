@@ -1,6 +1,12 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from booking_agent import BookingAgent
+import sys
+import os
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from booking_agent import BookingAgent, BookingResult
 
 @pytest.fixture
 def mock_session():
@@ -72,7 +78,7 @@ def test_book_room_success(agent, mock_session):
 
         status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert status == "SUCCESS"
+        assert status == BookingResult.SUCCESS
         assert ref == "123456"
 
 def test_book_room_failure(agent, mock_session):
@@ -86,7 +92,7 @@ def test_book_room_failure(agent, mock_session):
 
         status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert status == "ERROR"
+        assert status == BookingResult.ERROR
         assert ref is None
 
 def test_book_room_room_taken(agent, mock_session):
@@ -103,7 +109,7 @@ def test_book_room_room_taken(agent, mock_session):
 
         status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert status == "ROOM_TAKEN"
+        assert status == BookingResult.ROOM_TAKEN
         assert ref is None
 
 def test_book_room_user_limit(agent, mock_session):
@@ -120,6 +126,6 @@ def test_book_room_user_limit(agent, mock_session):
 
         status, ref = agent.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
-        assert status == "USER_LIMIT"
+        assert status == BookingResult.USER_LIMIT
         assert ref is None
 

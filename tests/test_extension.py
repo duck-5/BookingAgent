@@ -9,13 +9,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import scheduler as scheduler_module
 import config
-from booking_agent import BookingAgent
+from booking_agent import BookingAgent, BookingResult
 
 @pytest.fixture
 def scheduler_instance():
     # Mock __init__ to verify logic without loading files
     with patch('os.path.exists', return_value=True), \
-         patch('builtins.open', new_callable=MagicMock):
+         patch('builtins.open', new_callable=MagicMock), \
+         patch('scheduler.GoogleCalendarClient'), \
+         patch.object(scheduler_module.Scheduler, '_load_json', return_value=[]):
         sched = scheduler_module.Scheduler()
         sched.history = []
         return sched
@@ -24,6 +26,9 @@ def scheduler_instance():
 def mock_agent():
     agent = MagicMock()
     agent.email = "test@example.com"
+    # Set default return values to avoid ValueError on unpacking
+    agent.book_room.return_value = (BookingResult.ROOM_TAKEN, None)
+    agent.extend_booking.return_value = (BookingResult.ROOM_TAKEN, None)
     return agent
 
 @pytest.fixture
@@ -55,6 +60,13 @@ def setup_data(scheduler_instance, mock_agent):
         'prev_utc_end': prev_utc_end
     }
 
+@pytest.fixture(autouse=True)
+def mock_config(setup_data):
+    # Ensure tests only see the test room (125) and skip High Priority checks
+    with patch('config.HIGH_PRIORITY_ROOMS', {}), \
+         patch('config.LOW_PRIORITY_ROOMS', {setup_data['room_id']: setup_data['room_name']}):
+        yield
+
 def test_extend_booking_success(setup_data):
     sched = setup_data['scheduler']
     agent = setup_data['agent']
@@ -74,7 +86,7 @@ def test_extend_booking_success(setup_data):
     }]
 
     # Mock success
-    agent.extend_booking.return_value = ("SUCCESS", "REF123")
+    agent.extend_booking.return_value = (BookingResult.SUCCESS, "REF123")
     
     # Mock _save_history
     sched._save_history = MagicMock()
@@ -88,6 +100,7 @@ def test_extend_booking_success(setup_data):
         prev_utc_start, 
         slot['utc_end']
     )
+    # With strict config, book_room is REALLY not called for 125 if extend works
     agent.book_room.assert_not_called()
     
     sched._save_history.assert_called()
@@ -115,8 +128,8 @@ def test_extend_booking_fail_fallback_create(setup_data):
     }]
 
     # Mock fail then success
-    agent.extend_booking.return_value = ("USER_LIMIT", None)
-    agent.book_room.return_value = ("SUCCESS", "REF456")
+    agent.extend_booking.return_value = (BookingResult.USER_LIMIT, None)
+    agent.book_room.return_value = (BookingResult.SUCCESS, "REF456")
     
     sched._save_history = MagicMock()
 
@@ -141,7 +154,7 @@ def test_no_consecutive_booking_creates_new(setup_data):
 
     sched.history = []
     
-    agent.book_room.return_value = ("SUCCESS", "REF789")
+    agent.book_room.return_value = (BookingResult.SUCCESS, "REF789")
     sched._save_history = MagicMock()
 
     result = sched.attempt_booking(slot)
@@ -175,11 +188,11 @@ def test_consecutive_check_respects_user_and_room(setup_data):
             "ref_num": "REF222",
             "end_utc": prev_utc_end,
             "status": "SUCCESS",
-             "ref_num": "REF222"
+            "ref_num": "REF222"
         }
     ]
     
-    agent.book_room.return_value = ("SUCCESS", "REF999")
+    agent.book_room.return_value = (BookingResult.SUCCESS, "REF999")
     sched._save_history = MagicMock()
 
     sched.attempt_booking(slot)

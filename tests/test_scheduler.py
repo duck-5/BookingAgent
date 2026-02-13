@@ -1,7 +1,14 @@
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 from datetime import datetime
+import sys
+import os
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from scheduler import Scheduler
+from booking_agent import BookingResult
 
 @pytest.fixture
 def scheduler():
@@ -74,7 +81,7 @@ def test_attempt_booking_success(mock_datetime, scheduler):
     
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
-    mock_agent.book_room.return_value = ("SUCCESS", "REF123")
+    mock_agent.book_room.return_value = (BookingResult.SUCCESS, "REF123")
     
     scheduler.agents = [mock_agent]
     scheduler.last_successful_user = None
@@ -100,7 +107,7 @@ def test_attempt_booking_exhausted(mock_datetime, scheduler):
     
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
-    mock_agent.book_room.return_value = ("USER_LIMIT", None)
+    mock_agent.book_room.return_value = (BookingResult.USER_LIMIT, None)
     
     scheduler.agents = [mock_agent]
     
@@ -125,7 +132,7 @@ def test_attempt_booking_timeout(mock_datetime, scheduler):
     mock_agent = MagicMock()
     mock_agent.email = 'test@example.com'
     # Simulate room taken repeatedly
-    mock_agent.book_room.return_value = ("ROOM_TAKEN", None)
+    mock_agent.book_room.return_value = (BookingResult.ROOM_TAKEN, None)
     
     scheduler.agents = [mock_agent]
     

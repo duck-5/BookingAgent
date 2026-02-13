@@ -7,8 +7,13 @@ BOOKINGS_FILE = "bookings.json"
 HISTORY_FILE = "booking_history.json"
 LOG_FILE = "system.log"
 
+# Google Calendar
+GOOGLE_CALENDAR_CREDENTIALS = "client_secret.json"
+GOOGLE_CALENDAR_TOKEN = "token.json"
+GOOGLE_CALENDAR_ID = 'primary'
+
 # High Priority: The preferred rooms (e.g., Ground Floor / New Wing)
-LOW_PRIORITY_ROOMS = {
+HIGH_PRIORITY_ROOMS = {
     23: "Room 13",
     24: "Room 14",
     25: "Room 15",
@@ -16,7 +21,7 @@ LOW_PRIORITY_ROOMS = {
 }
 
 # Low Priority: Fallback rooms (e.g., Upper floors / Old Wing)
-HIGH_PRIORITY_ROOMS = {
+LOW_PRIORITY_ROOMS = {
     125: "Room 108",
     126: "Room 109",
     127: "Room 110",

@@ -5,27 +5,39 @@ import time
 import concurrent.futures
 from datetime import datetime, timedelta
 import config
-from booking_agent import BookingAgent
+from booking_agent import BookingAgent, BookingResult
+from google_calendar_client import GoogleCalendarClient
+from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
 class Scheduler:
     def __init__(self):
-        self.users_data = self._load_json(config.CREDENTIALS_FILE, [])
-        self.history = self._load_json(config.HISTORY_FILE, [])
-        self.agents = [] 
-        self.last_successful_user = None # Tracks who booked the previous slot
+        self.users_data: List[Dict[str, str]] = self._load_json(config.CREDENTIALS_FILE, [])
+        self.history: List[Dict[str, Any]] = self._load_json(config.HISTORY_FILE, [])
+        self.agents: List[BookingAgent] = [] 
+        self.last_successful_user: Optional[str] = None # Tracks who booked the previous slot
+        self.calendar_client = GoogleCalendarClient(
+            credentials_file=config.GOOGLE_CALENDAR_CREDENTIALS,
+            token_file=config.GOOGLE_CALENDAR_TOKEN
+        )
+        self.calendar_id = self.calendar_client.get_or_create_calendar("Library Bookings") 
 
-    def _load_json(self, filepath, default):
+    def _load_json(self, filepath: str, default: Any) -> Any:
         if not os.path.exists(filepath): return default
         try:
             with open(filepath, 'r') as f: return json.load(f)
-        except: return default
+        except Exception as e:
+            logger.error(f"Failed to load JSON from {filepath}: {e}")
+            return default
 
-    def _save_history(self, record):
+    def _save_history(self, record: Dict[str, Any]):
         self.history.append(record)
-        with open(config.HISTORY_FILE, 'w') as f:
-            json.dump(self.history, f, indent=4)
+        try:
+            with open(config.HISTORY_FILE, 'w') as f:
+                json.dump(self.history, f, indent=4)
+        except Exception as e:
+            logger.error(f"Failed to save history: {e}")
 
     def initialize_agents(self):
         if not self.users_data: return
@@ -41,7 +53,7 @@ class Scheduler:
         
         logger.info(f"Agents Ready: {len(self.agents)}")
 
-    def get_next_target_slot(self):
+    def get_next_target_slot(self) -> Tuple[Optional[Dict[str, Any]], float]:
         """
         Finds the single most urgent slot to book.
         We strictly look for slots opening SOON or NOW.
@@ -97,7 +109,7 @@ class Scheduler:
         
         return target, seconds_until_open
 
-    def attempt_booking(self, slot):
+    def attempt_booking(self, slot: Dict[str, Any]) -> bool:
         exhausted_emails = set()
         
         # 1. ORGANIZE ROOMS (High Priority First)
@@ -150,7 +162,7 @@ class Scheduler:
                                 prev_booking = h
                                 break
                         
-                        res = "ERROR"
+                        res = BookingResult.ERROR
                         ref_num = None
 
                         if prev_booking:
@@ -171,14 +183,14 @@ class Scheduler:
                                 # User says: "If the user can't schedual anymore, then a new event needs to be created."
                                 # "can't schedule anymore" implies USER_LIMIT. But creating new would also hit USER_LIMIT?
                                 # Unless the limit is per-reservation duration.
-                                if res != "SUCCESS":
+                                if res != BookingResult.SUCCESS:
                                     logger.info(f"   [EXTENSION FAILED] {res}. Retrying as new booking.")
                                     res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
                         else:
                             # CREATE NEW
                             res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
 
-                        if res == "SUCCESS":
+                        if res == BookingResult.SUCCESS:
                             display_start = prev_booking.get('start_utc', slot['utc_start']) if (prev_booking and ref_num == prev_booking['ref_num']) else slot['utc_start']
                             
                             logger.info(f"   [SUCCESS] {slot['key']} | {rname} | {agent.email} | Ref: {ref_num}")
@@ -191,15 +203,25 @@ class Scheduler:
                                 "end_utc": slot['utc_end']  # Track where we ended up
                             })
                             self.last_successful_user = agent.email
+                            
+                            # --- GOOGLE CALENDAR SYNC ---
+                            try:
+                                summary = f"Booking: {rname}"
+                                description = f"Booked by {agent.email}. Ref: {ref_num}"
+                                location = rname
+                                self.calendar_client.add_event(summary, display_start, slot['utc_end'], description, location, calendar_id=self.calendar_id or 'primary')
+                            except Exception as e:
+                                logger.error(f"Failed to add to calendar: {e}")
+
                             return True
                         
-                        elif res == "USER_LIMIT":
+                        elif res == BookingResult.USER_LIMIT:
                             exhausted_emails.add(agent.email)
                         
-                        elif res == "ROOM_TAKEN":
+                        elif res == BookingResult.ROOM_TAKEN:
                             break # Agent valid, Room dead. Next Room.
                         
-                        elif res == "TOO_EARLY":
+                        elif res == BookingResult.TOO_EARLY:
                             # No point rotating users or rooms, the Window isn't open.
                             # We break out of agent loop (to sleep) but DON'T mark failed.
                             logger.warning(f"   [TOO EARLY] Window not open yet for {slot['key']}. Retrying...")
