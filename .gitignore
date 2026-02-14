@@ -17,3 +17,6 @@ dist/
 *.exe
 *.spec
 .gitignore
+.client_secret.json
+token.json
+client_secret.json
