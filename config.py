@@ -11,21 +11,38 @@ LOG_FILE = "system.log"
 GOOGLE_CALENDAR_CREDENTIALS = "client_secret.json"
 GOOGLE_CALENDAR_TOKEN = "token.json"
 GOOGLE_CALENDAR_ID = 'primary'
+CALENDAR_NAME = "Library Bookings"
+CALENDAR_SCAN_DAYS = 8
+
+SYNC_INTERVAL_SECONDS = 30  # 1 hour
+
+# Delete Feature
+DELETE_KEYWORD = "DELETE"  # Keyword to search for in event titles (case-insensitive)
+DELETE_CHECK_INTERVAL = 30  # 5 minutes
+
+# Calendar Status / Colors
+class CalendarStatus:
+    PROCESSING = '5'   # Yellow
+    SUCCESS = '10'     # Green
+    SYNCED = '10'      # Green (same as SUCCESS)
+    FAILURE = '11'     # Red
+    DELETED = '11'     # Red (same as FAILURE)
+
 
 # High Priority: The preferred rooms (e.g., Ground Floor / New Wing)
 HIGH_PRIORITY_ROOMS = {
-    23: "Room 13",
-    24: "Room 14",
-    25: "Room 15",
-    26: "Room 16"
-}
-
-# Low Priority: Fallback rooms (e.g., Upper floors / Old Wing)
-LOW_PRIORITY_ROOMS = {
     125: "Room 108",
     126: "Room 109",
     127: "Room 110",
     128: "Room 111"
+}
+
+# Low Priority: Fallback rooms (e.g., Upper floors / Old Wing)
+LOW_PRIORITY_ROOMS = {
+    23: "Room 13",
+    24: "Room 14",
+    25: "Room 15",
+    26: "Room 16"
 }
 
 # Combined for lookup
