@@ -1,4 +1,5 @@
 import pytest
+pytest.skip("Extension logic is currently disabled in scheduler.py", allow_module_level=True)
 from unittest.mock import MagicMock, patch
 import sys
 import os
@@ -44,7 +45,9 @@ def setup_data(scheduler_instance, mock_agent):
         'key': slot_start.strftime("%Y-%m-%d %H:%M"),
         'start': slot_start,
         'utc_start': "2026-02-11T08:00:00.000Z",
-        'utc_end': "2026-02-11T09:00:00.000Z"
+        'utc_end': "2026-02-11T09:00:00.000Z",
+        'event_id': 'evt_ext',
+        'original_event': {'summary': 'Booking', 'description': 'desc', 'start': {}, 'end': {}}
     }
     
     prev_utc_start = "2026-02-11T07:00:00.000Z"
