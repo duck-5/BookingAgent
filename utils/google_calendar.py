@@ -202,11 +202,11 @@ class CalendarSync:
         
         for user_data in self.users:
             email = user_data.get('email', 'Unknown')
-            logger.info(f"Syncing user: {email}...")
+            logger.info(f"[SYNCER] Syncing user: {email}...")
             
             agent = self.BookingAgent(user_data)
             if not agent.login():
-                logger.error(f"  Failed to login {email}. Skipping.")
+                logger.warning(f"[SYNCER] Skipping {email} (Login Failed).")
                 continue
             
             for sid in range(1, 6):
@@ -244,7 +244,7 @@ class CalendarSync:
                 except Exception as e:
                     logger.error(f"  SID={sid}: {e}")
 
-        logger.info(f"Found {len(all_bookings)} unique server bookings.")
+        logger.info(f"[SYNCER] Retrieved {len(all_bookings)} bookings from University Server.")
 
         # 2. Fetch Existing Google Events
         google_events = []
@@ -325,7 +325,7 @@ class CalendarSync:
                 continue
             
             # Create event following [P] structure
-            logger.info(f"  Adding: {synced_summary} @ {start}")
+            logger.info(f"[SYNCER] Adding: {synced_summary} @ {start}")
             self.gc.add_event(
                 summary=synced_summary,
                 start_time=f"{server_iso_start}:00",
@@ -337,7 +337,7 @@ class CalendarSync:
             )
             count += 1
 
-        logger.info(f"Sync Complete. Added {count}. Skipped {skipped}.")
+        logger.info(f"[SYNCER] Sync Complete. Added {count}. Skipped {skipped}.")
 
 
 if __name__ == "__main__":

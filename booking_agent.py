@@ -53,12 +53,13 @@ class BookingAgent:
                 return True
             
             # If we are here, login failed (likely wrong password or account issue)
-            logger.warning(f"Login failed for {self.email} - Stayed on login page or no token.")
+            # If we are here, login failed (likely wrong password or account issue)
+            logger.warning(f"[AGENT] Login fail for {self.email} (invalid credential or session).")
             self.is_logged_in = False
             return False
             
         except Exception as e:
-            logger.error(f"Login failed for {self.email}: {e}")
+            logger.error(f"[AGENT] Login exception for {self.email}: {e}")
             self.is_logged_in = False
             return False
 

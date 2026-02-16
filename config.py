@@ -15,6 +15,7 @@ CALENDAR_NAME = "Library Bookings"
 CALENDAR_SCAN_DAYS = 8
 
 SYNC_INTERVAL_SECONDS = 30  # 1 hour
+CALENDAR_POLL_INTERVAL_SECONDS = 30 # 5 minutes
 
 # Delete Feature
 DELETE_KEYWORD = "DELETE"  # Keyword to search for in event titles (case-insensitive)
@@ -26,7 +27,7 @@ class CalendarStatus:
     SUCCESS = '10'     # Green
     SYNCED = '10'      # Green (same as SUCCESS)
     FAILURE = '11'     # Red
-    DELETED = '11'     # Red (same as FAILURE)
+    DELETED = '8'      # Gray
 
 
 # High Priority: The preferred rooms (e.g., Ground Floor / New Wing)
@@ -48,26 +49,24 @@ LOW_PRIORITY_ROOMS = {
 # Combined for lookup
 ALL_ROOMS = {**HIGH_PRIORITY_ROOMS, **LOW_PRIORITY_ROOMS}
 
+from utils.logger import setup_colored_logging
+from dashboard.logger import DashboardHandler
+import logging
+
 def setup_logging():
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+    # 1. Setup Console/File logging
+    root = setup_colored_logging(LOG_FILE)
     
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    stream_handler.setLevel(logging.DEBUG)
-    
-    file_handler = logging.FileHandler(LOG_FILE, mode='a')
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)
-    
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    
-    if logger.hasHandlers():
-        logger.handlers.clear()
-        
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
+    # 2. Attach Dashboard Handler
+    dash_handler = DashboardHandler()
+    dash_handler.setLevel(logging.INFO) # Only show INFO+ on dashboard to reduce noise? Or DEBUG?
+    # Let's show DEBUG for now but maybe filter in UI
+    dash_handler.setLevel(logging.DEBUG) 
+    root.addHandler(dash_handler)
 
     # Silence libraries
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
+    logging.getLogger("googleapiclient").setLevel(logging.WARNING)
+    logging.getLogger("oauth2client").setLevel(logging.WARNING)

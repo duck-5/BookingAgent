@@ -39,12 +39,24 @@ class Scheduler:
             time.sleep(config.SYNC_INTERVAL_SECONDS)
             # Wait until no booking is in progress
             self._booking_in_progress.wait()
+            
+            logger.info("[SCHEDULER] === STARTING SYNC CYCLE ===")
+            
+            # 1. Process User Requests (Deletes) First
+            logger.debug("[SCHEDULER] Processing delete requests...")
+            try:
+                self._process_delete_requests()
+            except Exception as e:
+                logger.error(f"[SCHEDULER] Delete processing failed: {e}")
+            
+            # 2. Sync Server State to Calendar
             if self.syncer:
-                logger.info("[SYNC] Running periodic calendar sync...")
+                logger.debug("[SCHEDULER] Running periodic calendar sync...")
                 try:
                     self.syncer.sync_all_users()
+                    logger.info("[SCHEDULER] === SYNC CYCLE COMPLETE ===")
                 except Exception as e:
-                    logger.error(f"[SYNC] Periodic sync failed: {e}")
+                    logger.error(f"[SCHEDULER] Periodic sync failed: {e}")
 
     def _process_delete_requests(self):
         """
@@ -83,7 +95,7 @@ class Scheduler:
                     continue
                 
                 # Skip already deleted events
-                if '[DELETED]' in summary:
+                if '[D]' in summary:
                     continue
                 
                 # Extract reference number from description
@@ -137,12 +149,14 @@ class Scheduler:
                     
                     if agent.delete_booking(ref_num):
                         deleted = True
-                        logger.info(f"[DELETE] Successfully deleted booking {ref_num} from server by {agent.email}")
+                        logger.info(f"[SCHEDULER] [DELETE] Successfully deleted booking {ref_num} from server by {agent.email}")
                         
-                        # Mark event as [DELETED] with red color
-                        new_summary = summary.replace('[P]', '[DELETED]').replace('[S]', '[DELETED]')
                         # Remove DELETE keyword from title to avoid re-processing
-                        new_summary = new_summary.replace(config.DELETE_KEYWORD, '').strip()
+                        new_summary = summary.replace(config.DELETE_KEYWORD, '').strip()
+
+                        # Mark event as [DELETED] with red color
+                        new_summary = new_summary.replace('[P]', '[DELETED]').replace('[S]', '[DELETED]')
+                        
                         # Clean up extra spaces
                         new_summary = ' '.join(new_summary.split())
                         
@@ -162,7 +176,7 @@ class Scheduler:
                         break  # Successfully deleted, no need to try other agents
                 
                 if not deleted:
-                    logger.error(f"[DELETE] Failed to delete booking {ref_num}")
+                    logger.error(f"[SCHEDULER] [DELETE] Failed to delete booking {ref_num}")
                     self._update_calendar_event(
                         event['id'], 
                         'FAILURE', 
@@ -172,10 +186,10 @@ class Scheduler:
                     skip_count += 1
             
             if delete_count > 0 or skip_count > 0:
-                logger.info(f"[DELETE] Processed {delete_count} deletions, skipped {skip_count}")
+                logger.info(f"[SCHEDULER] [DELETE] Processed {delete_count} deletions, skipped {skip_count}")
                 
         except Exception as e:
-            logger.error(f"[DELETE] Error processing delete requests: {e}")
+            logger.error(f"[SCHEDULER] [DELETE] Error processing delete requests: {e}")
 
     def _load_json(self, filepath: str, default: Any) -> Any:
         if not os.path.exists(filepath): return default
@@ -187,7 +201,7 @@ class Scheduler:
 
     def initialize_agents(self):
         if not self.users_data: return
-        logger.info(f"--- Initializing {len(self.users_data)} Agents ---")
+        logger.info(f"[SCHEDULER] --- Initializing {len(self.users_data)} Agents ---")
         temp_agents = [BookingAgent(u) for u in self.users_data]
         self.agents = []
 
@@ -197,7 +211,7 @@ class Scheduler:
                 agent = future_to_agent[future]
                 if future.result(): self.agents.append(agent)
         
-        logger.info(f"Agents Ready: {len(self.agents)}")
+        logger.info(f"[SCHEDULER] Agents Ready: {len(self.agents)}")
 
     def _update_calendar_event(self, event_id: str, status: str, original_event: Dict[str, Any], **kwargs):
         """
@@ -356,8 +370,13 @@ class Scheduler:
         """Merge consecutive successful bookings on same room/user."""
         try:
             # Fetch all processed events in a reasonable range
-            search_start = (start_time - timedelta(hours=12)).isoformat() + 'Z'
-            search_end = (end_time + timedelta(hours=12)).isoformat() + 'Z'
+            # Ensure we search using proper UTC ISO format 'Z'
+            # Convert start/end to UTC first to avoid +02:00Z double suffix
+            search_start_dt = (start_time - timedelta(hours=12)).astimezone(timezone.utc)
+            search_end_dt = (end_time + timedelta(hours=12)).astimezone(timezone.utc)
+            
+            search_start = search_start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            search_end = search_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
             
             events_result = self.calendar_client.service.events().list(
                 calendarId=self.calendar_id,
@@ -444,7 +463,9 @@ class Scheduler:
                 orderBy='startTime'
             ).execute()
             
-            for event in events_result.get('items', []):
+            raw_items = events_result.get('items', [])
+            
+            for event in raw_items:
                 summary = event.get('summary', '')
                 
                 # Filter Logic
@@ -492,14 +513,23 @@ class Scheduler:
                     "start": dt_start,
                     "opening_time": opening_time,
                     "key": summary, # Display name
-                    "utc_start": dt_utc_start.astimezone().strftime("%Y-%m-%dT%H:%M:%S"),
-                    "utc_end": dt_utc_end.astimezone().strftime("%Y-%m-%dT%H:%M:%S"),
+                    # Fix: .astimezone() defaulted to local, causing offset logic bugs.
+                    # We strictly want the UTC digits for the server.
+                    "utc_start": dt_utc_start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "utc_end": dt_utc_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                     "event_id": event['id'],
                     "original_event": event
                 })
 
         except Exception as e:
             logger.error(f"Error fetching calendar events: {e}")
+            
+        if candidates:
+            logger.info(f"[SCHEDULER] Found {len(candidates)} valid 'Booking' candidates.")
+            for c in candidates:
+                logger.debug(f"[SCHEDULER]    > Candidate: '{c['key']}' @ {c['start']}")
+        else:
+            logger.debug("[SCHEDULER] No valid 'Booking' candidates found.")
             
         return candidates
 
@@ -637,14 +667,14 @@ class Scheduler:
         while True:
             # --- TIMEOUT / GIVE UP LOGIC ---
             if time.time() - start_time > 120:
-                logger.info(f"   [TIMEOUT] Could not book {slot['key']} within 2 mins.")
+                logger.info(f"[SCHEDULER] [BOOKING] [TIMEOUT] Could not book {slot['key']} within 2 mins.")
                 self._update_calendar_event(slot['event_id'], 'FAILURE', slot['original_event'], reason="Timeout - Could not secure room")
                 return False
 
             # Check if all rooms are failed
             total_rooms_count = sum(len(rooms) for rooms in room_batches)
             if len(failed_rooms) >= total_rooms_count:
-                 logger.warning(f"   [FAILED] All {total_rooms_count} rooms are unavailable for {slot['key']}.")
+                 logger.warning(f"[SCHEDULER] [BOOKING] [FAILED] All {total_rooms_count} rooms are unavailable for {slot['key']}.")
                  self._update_calendar_event(slot['event_id'], 'FAILURE', slot['original_event'], reason="All Rooms Taken")
                  return False
 
@@ -667,13 +697,14 @@ class Scheduler:
                         res, ref_num = agent.book_room(rid, slot['utc_start'], slot['utc_end'])
 
                         if res == BookingResult.SUCCESS:
-                            logger.info(f"   [SUCCESS] {slot['key']} | {rname} | {agent.email} | Ref: {ref_num}")
+                            logger.info(f"[SCHEDULER] [BOOKING] [SUCCESS] {slot['key']} | {rname} | {agent.email} | Ref: {ref_num}")
                             self.last_successful_user = agent.email
                             
                             # --- GOOGLE CALENDAR SYNC (SUCCESS) ---
                             # Calculate slot times for splitting/merging
-                            slot_start_dt = datetime.fromisoformat(slot['utc_start'].replace('Z', '+00:00')).astimezone()
-                            slot_end_dt = datetime.fromisoformat(slot['utc_end'].replace('Z', '+00:00')).astimezone()
+                            # Parse UTC string (Z) back to aware datetime
+                            slot_start_dt = datetime.fromisoformat(slot['utc_start'].replace('Z', '+00:00'))
+                            slot_end_dt = datetime.fromisoformat(slot['utc_end'].replace('Z', '+00:00'))
                             
                             # Check if this is a multi-hour event that needs splitting
                             original_duration = self._get_event_duration_hours(slot['original_event'])
@@ -748,22 +779,22 @@ class Scheduler:
                             return True
                         
                         elif res == BookingResult.USER_LIMIT:
-                            logger.info(f"   [USER LIMIT] {agent.email} exhausted.")
+                            logger.info(f"[SCHEDULER] [BOOKING] [USER LIMIT] {agent.email} exhausted.")
                             exhausted_emails.add(agent.email)
                         
                         elif res == BookingResult.ROOM_TAKEN:
-                            logger.info(f"   [ROOM TAKEN] {rname} is unavailable.")
+                            logger.info(f"[SCHEDULER] [BOOKING] [ROOM TAKEN] {rname} is unavailable.")
                             failed_rooms.add(rid)
                             break # Agent valid, Room dead. Next Room.
                         
                         elif res == BookingResult.CLOSED:
-                            logger.warning(f"   [CLOSED] Library closed or invalid booking time for {rname}.")
+                            logger.warning(f"[SCHEDULER] [BOOKING] [CLOSED] Library closed or invalid booking time for {rname}.")
                             failed_rooms.add(rid) 
                             # If closed, it's likely closed for ALL agents on this room.
                             break
 
                         elif res == BookingResult.TOO_EARLY:
-                            logger.warning(f"   [TOO EARLY] Window not open yet for {slot['key']}. Retrying...")
+                            logger.warning(f"[SCHEDULER] [BOOKING] [TOO EARLY] Window not open yet for {slot['key']}. Retrying...")
                             start_time = time.time() # Reset timeout if we are just early? 
                             # Actually, if we are early, we should just retry loop. 
                             # But we need to avoid infinite loop if it NEVER opens (e.g. calculation wrong).
@@ -771,11 +802,11 @@ class Scheduler:
                             break
                         
                         elif res == BookingResult.ERROR:
-                             logger.warning(f"   [ERROR] Agent {agent.email} failed on {rname}.")
+                             logger.warning(f"[SCHEDULER] [BOOKING] [ERROR] Agent {agent.email} failed on {rname}.")
 
             # --- ALL USERS EXHAUSTED LOGIC ---
             if len(exhausted_emails) == len(self.agents):
-                logger.warning(f"   [FAILED] All users exhausted limit for {slot['key']}.")
+                logger.warning(f"[SCHEDULER] [BOOKING] [FAILED] All users exhausted limit for {slot['key']}.")
                 self._update_calendar_event(slot['event_id'], 'FAILURE', slot['original_event'], reason="All Users Quotas Exhausted")
                 return False
             
@@ -784,56 +815,47 @@ class Scheduler:
 
     def run(self):
         # Initialize agents at startup
-        logger.info("Initializing agents at startup...")
+        logger.info("[SCHEDULER] Initializing agents at startup...")
         self.initialize_agents()
         
         # Sync on startup
         if self.syncer:
-            logger.info("Running startup calendar sync...")
+            logger.info("[SCHEDULER] Running startup calendar sync...")
             try:
                 self.syncer.sync_all_users()
             except Exception as e:
-                logger.error(f"Startup sync failed: {e}")
+                logger.error(f"[SCHEDULER] Startup sync failed: {e}")
             
             # Start periodic sync daemon thread
             sync_thread = threading.Thread(target=self._sync_worker, daemon=True)
             sync_thread.start()
+            logger.info(f"[SCHEDULER] Periodic sync thread started (every {config.SYNC_INTERVAL_SECONDS}s).")
+        
             logger.info(f"Periodic sync thread started (every {config.SYNC_INTERVAL_SECONDS}s).")
-        
-        # Start periodic delete processing daemon thread
-        def delete_worker():
-            """Background thread for processing delete requests."""
-            while True:
-                time.sleep(config.DELETE_CHECK_INTERVAL)
-                # Wait until no booking is in progress
-                self._booking_in_progress.wait()
-                logger.info("[DELETE] Checking for delete requests...")
-                try:
-                    self._process_delete_requests()
-                except Exception as e:
-                    logger.error(f"[DELETE] Delete processing failed: {e}")
-        
-        delete_thread = threading.Thread(target=delete_worker, daemon=True)
-        delete_thread.start()
-        logger.info(f"Periodic delete check thread started (every {config.DELETE_CHECK_INTERVAL}s).")
 
         while True:
             target, seconds_wait = self.get_next_target_slot()
             
             if not target:
-                logger.info("No bookings found in calendar (next 8 days). Sleeping 10m.")
-                time.sleep(600)
+                logger.info(f"[SCHEDULER] No bookings found in calendar (next {config.CALENDAR_SCAN_DAYS} days). Sleeping {config.CALENDAR_POLL_INTERVAL_SECONDS}s.")
+                time.sleep(config.CALENDAR_POLL_INTERVAL_SECONDS)
                 continue
 
             if seconds_wait > 60:
+                # Cap sleep time to ensure we poll for new events
+                if seconds_wait > config.CALENDAR_POLL_INTERVAL_SECONDS:
+                    logger.info(f"[SCHEDULER] >> Target is far ({int(seconds_wait/60)}m). Sleeping 5m then re-scanning...")
+                    time.sleep(config.CALENDAR_POLL_INTERVAL_SECONDS)
+                    continue
+
                 sleep_time = seconds_wait - 60
                 wake_time = datetime.now().astimezone() + timedelta(seconds=sleep_time)
-                logger.info(f"Target: {target['key']}. Opens in {int(seconds_wait/60)}m.")
-                logger.info(f"Sleeping until {wake_time.strftime('%H:%M:%S')}...")
+                logger.info(f"[SCHEDULER] >> Target: '{target['key']}' opens in {int(seconds_wait/60)}m.")
+                logger.info(f"[SCHEDULER] >> Sleeping until {wake_time.strftime('%H:%M:%S')}...")
                 time.sleep(sleep_time)
             
             # WAKE UP SEQUENCE
-            logger.info(f"--- PREPARING FOR: {target['key']} ---")
+            logger.info(f"[SCHEDULER] !!! WAKING UP FOR: {target['key']} !!!")
             
             # 1. Re-Verify Login
             self.initialize_agents()
