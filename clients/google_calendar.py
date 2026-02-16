@@ -159,15 +159,17 @@ class CalendarSync:
     
     def __init__(self):
         import config
-        from booking_agent import BookingAgent
+        from clients.tau_client import TauClient
+        from core.entities import UserCredentials
         
         self.config = config
-        self.BookingAgent = BookingAgent
+        self.TauClient = TauClient
         self.users = []
         
         try:
             with open(config.CREDENTIALS_FILE, 'r') as f:
-                self.users = json.load(f)
+                raw_users = json.load(f)
+                self.users = [UserCredentials(**u) for u in raw_users]
         except Exception as e:
             logger.error(f"Error loading credentials: {e}")
 
@@ -200,11 +202,11 @@ class CalendarSync:
         # Key: booking_id -> { event_data, owner_email }
         all_bookings = {}
         
-        for user_data in self.users:
-            email = user_data.get('email', 'Unknown')
+        for user_creds in self.users:
+            email = user_creds.email
             logger.info(f"[SYNCER] Syncing user: {email}...")
             
-            agent = self.BookingAgent(user_data)
+            agent = self.TauClient(user_creds)
             if not agent.login():
                 logger.warning(f"[SYNCER] Skipping {email} (Login Failed).")
                 continue
