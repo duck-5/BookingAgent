@@ -184,11 +184,81 @@ class CalendarSync:
              
         logger.info(f"Calendar Sync Ready. Target: {config.CALENDAR_NAME}")
 
-    def sync_all_users(self):
-        """Syncs server bookings to Google Calendar with [S] prefix, green color, and user attribution."""
+    def _sync_user_internal(self, user_creds, s_str, e_str, progress_callback=None):
+        """
+        Internal method to sync a single user.
+        Returns a dictionary of bookings found for this user.
+        """
+        email = user_creds.email
+        logger.info(f"[SYNCER] Syncing user: {email}...")
+        
+        if progress_callback:
+            progress_callback(email, "loading", "Fetching...")
+
+        agent = self.TauClient(user_creds)
+        if not agent.login():
+            logger.warning(f"[SYNCER] Skipping {email} (Login Failed).")
+            if progress_callback:
+                progress_callback(email, "error", "Login Failed")
+            return {}
+        
+        user_bookings = {}
+        found_count = 0
+        
+        for sid in range(1, 6):
+            time.sleep(0.2)
+            url = f"{agent.BASE_URL}/my-calendar.php?dr=events&start={s_str}&end={e_str}&sid={sid}&rid=&gid="
+            headers = {
+                "X-Requested-With": "XMLHttpRequest", 
+                "Referer": f"{agent.BASE_URL}/schedule.php"
+            }
+            
+            try:
+                resp = agent.session.get(url, headers=headers)
+                if resp.status_code == 200:
+                    try:
+                        events = resp.json()
+                    except json.JSONDecodeError:
+                        if "Log In" in resp.text[:500]:
+                            logger.error(f"  SID={sid}: Session expired. Re-login disabled.")
+                            continue
+                        else:
+                            logger.error(f"  SID={sid}: JSON decode failed.")
+                            continue
+                    
+                    for evt in events:
+                        cls = evt.get('className', '')
+                        if any(x in cls for x in ["mine", "coowner", "participating"]):
+                            bid = evt.get('id')
+                            if bid not in user_bookings:
+                                user_bookings[bid] = {'event': evt, 'owner': email, 'agent': agent}
+                                found_count += 1
+                                # Report individual booking found (as detail item)
+                                if progress_callback:
+                                    # Use special prefix or just text
+                                    title = evt.get('title', 'Unknown')
+                                    start_t = evt.get('start', '')
+                                    progress_callback(email, "details", f" - Found: {title} ({start_t})")
+                else:
+                    logger.warning(f"  SID={sid} returned status {resp.status_code}")
+            except Exception as e:
+                logger.error(f"  SID={sid}: {e}")
+        
+        if progress_callback:
+            progress_callback(email, "success", f"Found {found_count} bookings")
+            
+        return user_bookings
+
+    def sync_all_users(self, progress_callback=None):
+        """
+        Syncs server bookings to Google Calendar using parallel threads.
+        progress_callback: func(email, status, message)
+        """
         if not self.users:
             logger.warning("No users to sync.")
             return
+
+        import concurrent.futures
 
         now = datetime.now()
         scan_days = getattr(self.config, 'CALENDAR_SCAN_DAYS', 7)
@@ -198,53 +268,24 @@ class CalendarSync:
         s_str = start_date.strftime("%Y-%m-%d")
         e_str = end_date.strftime("%Y-%m-%d")
 
-        # 1. Fetch from Server — track owner email per booking
-        # Key: booking_id -> { event_data, owner_email }
+        # 1. Fetch from Server in Parallel
         all_bookings = {}
         
-        for user_creds in self.users:
-            email = user_creds.email
-            logger.info(f"[SYNCER] Syncing user: {email}...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_user = {
+                executor.submit(self._sync_user_internal, u, s_str, e_str, progress_callback): u 
+                for u in self.users
+            }
             
-            agent = self.TauClient(user_creds)
-            if not agent.login():
-                logger.warning(f"[SYNCER] Skipping {email} (Login Failed).")
-                continue
-            
-            for sid in range(1, 6):
-                time.sleep(0.2)
-                url = f"{agent.BASE_URL}/my-calendar.php?dr=events&start={s_str}&end={e_str}&sid={sid}&rid=&gid="
-                headers = {
-                    "X-Requested-With": "XMLHttpRequest", 
-                    "Referer": f"{agent.BASE_URL}/schedule.php"
-                }
-                
-                # Single attempt - no retry on session expiry
+            for future in concurrent.futures.as_completed(future_to_user):
+                user = future_to_user[future]
                 try:
-                    resp = agent.session.get(url, headers=headers)
-                    if resp.status_code == 200:
-                        try:
-                            events = resp.json()
-                        except json.JSONDecodeError:
-                            # Check if it's a login page (session expired)
-                            if "Log In" in resp.text[:500]:
-                                logger.error(f"  SID={sid}: Session expired. Re-login disabled.")
-                                continue
-                            else:
-                                logger.error(f"  SID={sid}: JSON decode failed. Body preview: {resp.text[:200]}")
-                                continue
-                        
-                        # Success - process events
-                        for evt in events:
-                            cls = evt.get('className', '')
-                            if any(x in cls for x in ["mine", "coowner", "participating"]):
-                                bid = evt.get('id')
-                                if bid not in all_bookings:
-                                    all_bookings[bid] = {'event': evt, 'owner': email, 'agent': agent}
-                    else:
-                        logger.warning(f"  SID={sid} returned status {resp.status_code}")
-                except Exception as e:
-                    logger.error(f"  SID={sid}: {e}")
+                    user_bookings = future.result()
+                    all_bookings.update(user_bookings)
+                except Exception as exc:
+                    logger.error(f"[SYNCER] User {user.email} generated an exception: {exc}")
+                    if progress_callback:
+                        progress_callback(user.email, "error", "Sync Error")
 
         logger.info(f"[SYNCER] Retrieved {len(all_bookings)} bookings from University Server.")
 

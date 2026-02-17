@@ -1,6 +1,5 @@
 credentials.json
 booking_history.json
-*.html
 *.log
 __pycache__/
 booking_history.json

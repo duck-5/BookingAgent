@@ -167,6 +167,19 @@ class CalendarManager:
                 reason = kwargs.get('reason', 'Unknown Error')
                 updates['description'] = f"{current_desc}\n\nError: {reason}"
 
+            elif status == CalendarStatus.DELETED:
+                updates['colorId'] = status # Gray
+                deleted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Cleanse summary
+                s = new_summary
+                s = s.replace("[P]", "").replace("[S]", "").replace(config.DELETE_KEYWORD, "").strip()
+                # Remove leading non-alphanumeric if messy
+                import re
+                s = re.sub(r'^[^a-zA-Z0-9]+', '', s).strip()
+                
+                updates['summary'] = f"[D] {s}"
+                updates['description'] = f"{current_desc}\n\n[DELETED] The booking was successfully cancelled on server.\nTime: {deleted_at}"
+
             updates['summary'] = new_summary
             
             body = {**original_event, **updates}

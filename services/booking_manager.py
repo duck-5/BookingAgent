@@ -1,5 +1,6 @@
 import logging
 import time
+import threading
 import concurrent.futures
 from typing import List, Dict, Any, Tuple
 from core.entities import BookingRequest
@@ -15,7 +16,7 @@ class BookingManager:
         self.agent_manager = agent_manager
         self.failed_rooms = set()
 
-    def attempt_booking(self, request: BookingRequest) -> Tuple[BookingResult, Any]:
+    def attempt_booking(self, request: BookingRequest, stop_event: threading.Event = None) -> Tuple[BookingResult, Any]:
         """
         Attempts to book the request using available agents and strategies.
         Returns (Result, Details).
@@ -35,6 +36,11 @@ class BookingManager:
 
         # Retry Loop (Sniping / Persistence)
         while True:
+            # Quick Exit if stopped
+            if stop_event and stop_event.is_set():
+                logger.info("[BOOKING] Stop signal received. Aborting booking attempt.")
+                return BookingResult.ERROR, "Systems Stopping"
+
             # Timestamp Check
             if time.time() - start_time > 120:
                 logger.info(f"[BOOKING] Timeout for {request.summary}")
@@ -86,7 +92,7 @@ class BookingManager:
             # Sleep briefly to avoid hammering if we are looping (e.g. waiting for slot)
             time.sleep(1)
 
-    def cancel_booking(self, request: Any) -> bool: # request: DeletionRequest
+    def cancel_booking(self, request: Any) -> Tuple[bool, str]: # request: DeletionRequest
         """
         Attempts to cancel a booking.
         """
@@ -97,11 +103,17 @@ class BookingManager:
         
         agents_to_try = [agent_to_use] if agent_to_use else self.agent_manager.get_all_agents()
         
+        last_reason = "No agents available"
+        
         for agent in agents_to_try:
             logger.info(f"[BOOKING] Attempting delete {request.ref_num} with {agent.email}...")
             # Force Login for delete safety
             agent.is_logged_in = False 
-            if agent.delete_booking(request.ref_num):
-                 return True
+            
+            success, reason = agent.delete_booking(request.ref_num)
+            if success:
+                 return True, "Deleted"
+            
+            last_reason = reason
                  
-        return False
+        return False, last_reason

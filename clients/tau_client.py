@@ -120,14 +120,14 @@ class TauClient:
         logger.debug(f"Booking payload: {json.dumps(data)}")
         return self._send_reservation_request(self.BOOKING_URL, data)
 
-    def delete_booking(self, ref_num: str) -> bool:
+    def delete_booking(self, ref_num: str) -> Tuple[bool, str]:
         logger.debug(f"[DELETE] Starting delete for {ref_num}, is_logged_in={self.is_logged_in}")
         
         if not self.is_logged_in:
-            if not self.login(): return False
+            if not self.login(): return False, "Login Failed"
         
         csrf = self.get_csrf_token()
-        if not csrf: return False
+        if not csrf: return False, "CSRF Missing"
         
         delete_url = f"{self.BASE_URL}/api/reservation.php?api=delete"
         
@@ -150,14 +150,14 @@ class TauClient:
             r = self.session.post(delete_url, json=payload, headers=headers, timeout=20)
             
             if r.status_code != 200:
-                return False
+                return False, f"HTTP {r.status_code}"
 
             if not r.text.strip():
-                return True
+                return True, "Success"
             
             try:
                 res = r.json()
-                if res.get("data", {}).get("success"): return True
+                if res.get("data", {}).get("success"): return True, "Success"
                 
                 errors = []
                 if "errors" in res:
@@ -167,15 +167,17 @@ class TauClient:
                     errors = res["data"]["errors"]
                 
                 if errors:
-                    logger.error(f"Failed to delete {ref_num}: {errors}")
-                return False
+                    msg = "; ".join([str(e) for e in errors])
+                    logger.error(f"Failed to delete {ref_num}: {msg}")
+                    return False, msg
+                return False, "Unknown Error"
                     
             except json.JSONDecodeError:
-                return False
+                return False, "Invalid JSON Response"
                 
         except Exception as e:
             logger.error(f"Error deleting booking {ref_num}: {e}")
-            return False
+            return False, str(e)
 
     def get_user_bookings(self, start_date, end_date):
         if not self.is_logged_in: 

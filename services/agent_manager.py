@@ -32,12 +32,19 @@ class AgentManager:
                 future_to_agent = {executor.submit(a.login): a for a in temp_agents}
                 for future in concurrent.futures.as_completed(future_to_agent):
                     agent = future_to_agent[future]
-                    if future.result():
-                        self.agents.append(agent)
-                    else:
-                        logger.warning(f"[AGENT_MGR] Failed to login agent: {agent.email}")
+                    try:
+                        success = future.result()
+                    except Exception as e:
+                        logger.error(f"[AGENT_MGR] Login thread error for {agent.email}: {e}")
+                        success = False
+                    
+                    # Store agent regardless of success, so we can show "Failed" in dashboard
+                    self.agents.append(agent)
+                    
+                    if not success:
+                         logger.warning(f"[AGENT_MGR] Failed to login: {agent.email}")
 
-            logger.info(f"[AGENT_MGR] {len(self.agents)} Agents Ready.")
+            logger.info(f"[AGENT_MGR] {len(self.agents)} Agents Initialized.")
             
         except Exception as e:
             logger.error(f"[AGENT_MGR] Failed to load agents: {e}")
