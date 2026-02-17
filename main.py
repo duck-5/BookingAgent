@@ -12,7 +12,13 @@ def run_dashboard():
     # Run Uvicorn in a thread. 
     # Use 0.0.0.0 so it's accessible externally if needed, but localhost is safer.
     # log_level="error" suppresses uvicorn's own access logs to keep console clean for our app logs.
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="error")
+    
+    # CRITICAL: Prevent Uvicorn from hijacking signal handlers (CTRL+C)
+    # We do this by instantiating Server and overriding install_signal_handlers
+    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="error")
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None # No-op
+    server.run()
 
 if __name__ == "__main__":
     config.setup_logging()
@@ -33,13 +39,10 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("\nStopping Scheduler (Ctrl+C detected)...")
         # Signal stop to threads
-        s._stop_event.set()
-        
-        # Wake up any sleeping threads so they can exit gracefully
-        s._scan_wake_event.set()
-        s._sync_wake_event.set()
-        s._booking_in_progress.set() # Unblock sync if waiting
+        s.stop()
         
         # Give them a moment to finish current loop iteration
         time.sleep(1) 
         logger.info("Shutdown complete.")
+        import os
+        os._exit(0)

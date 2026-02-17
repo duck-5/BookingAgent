@@ -16,6 +16,7 @@ class DashboardHandler(logging.Handler):
             source = "SYSTEM"
             if "[SCHEDULER]" in msg: source = "SCHEDULER"
             elif "[SYNCER]" in msg: source = "SYNCER"
+            elif "[BOOKING]" in msg: source = "BOOKING"
             elif "[AGENT]" in msg: source = "AGENT"
             
             # Clean message (remove prefix if desired, but keep for now)

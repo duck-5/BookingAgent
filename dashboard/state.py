@@ -24,7 +24,7 @@ class MonitorState:
             "next_action": "Unknown",
             "active_tasks": 0
         }
-        self.logs = deque(maxlen=200) # Increased log retention
+        self.logs = [] # Changed from deque to list for easier searching/filtering
         self.actions = {} 
         self.events = [] 
 
@@ -39,7 +39,7 @@ class MonitorState:
             "CREATE": {"active": False, "status": "Idle", "items": []}
         }
         
-        self.timer = {"target": None, "label": None} # {target: timestamp_iso, label: "Booking Room X"}
+        self.timers = {} # key -> {target, label}
 
     def update_status(self, key: str, value: Any):
         with self._lock:
@@ -50,12 +50,16 @@ class MonitorState:
         with self._lock:
             self.agents = agents_list
 
-    def set_timer(self, target_time: Optional[datetime], label: str = ""):
+    def set_timer(self, key: str, target_time: Optional[datetime], label: str = ""):
         with self._lock:
-            self.timer = {
-                "target": target_time.isoformat() if target_time else None,
-                "label": label
-            }
+            if target_time:
+                self.timers[key] = {
+                    "target": target_time.isoformat(),
+                    "label": label
+                }
+            else:
+                 # Remove or set to null? Setting to null keeps the slot
+                 self.timers[key] = {"target": None, "label": label}
 
     def op_start(self, op_type: str, status_msg: str = "Running..."):
         """Start an operation section."""
@@ -78,10 +82,13 @@ class MonitorState:
                 self.operations[op_type]["active"] = False
                 self.operations[op_type]["status"] = status_msg
 
+    _id_counter = 0
+
     def op_add_item(self, op_type: str, text: str, status: str = "pending") -> str:
         """Add a trackable item to an operation. Returns item ID."""
-        item_id = str(int(time.time() * 10000)) # Simple ID
         with self._lock:
+            self._id_counter += 1
+            item_id = f"{int(time.time() * 1000)}-{self._id_counter}"
             if op_type in self.operations:
                 self.operations[op_type]["items"].append({
                     "id": item_id,
@@ -99,7 +106,11 @@ class MonitorState:
                     if item["id"] == item_id:
                         item["status"] = new_status
                         if extra_text:
-                            item["text"] += f" {extra_text}"
+                             # Check if we should append or replace? 
+                             # For error/success with details, let's replace nicely or append.
+                             # If extra_text starts with '❌' or 'SUCCESS', maybe simpler to replace?
+                             # Let's just append for now to be safe.
+                            item["text"] = extra_text 
                         break
 
     def log(self, level: str, source: str, message: str):
@@ -110,12 +121,22 @@ class MonitorState:
         entry = {
             "id": int(time.time() * 1000),
             "time": datetime.now().strftime("%H:%M:%S"),
+            "timestamp": time.time(),
             "level": level,
             "source": source,
             "message": message
         }
         with self._lock:
-            self.logs.appendleft(entry) # Newest first
+            self.logs.insert(0, entry) # Newest first
+            self._cleanup_logs()
+            
+    def _cleanup_logs(self):
+        """Remove logs older than 15 minutes."""
+        # 15 mins = 900 seconds
+        cutoff = time.time() - 900
+        # self.logs is sorted desc by time. iterate from end.
+        while self.logs and self.logs[-1]["timestamp"] < cutoff:
+            self.logs.pop()
 
     def register_action(self, name: str, callback):
         with self._lock:
@@ -142,7 +163,7 @@ class MonitorState:
                 # Enhanced Data
                 "agents": list(self.agents),
                 "operations": self.operations.copy(), # Deep copy might be safer but shallow copy of dict structure is ok for serialization
-                "timer": self.timer.copy()
+                "timers": self.timers.copy()
             }
 
 # Global Instance
