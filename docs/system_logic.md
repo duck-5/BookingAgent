@@ -1,49 +1,59 @@
 # System Logic: Technical Deep Dive
 
-This document details the internal algorithms, decision trees, and error-handling mechanisms of the Booking Agent. For high-level constraints, see [Booking Rules](booking_rules.md).
+This document details the internal algorithms, decision trees, and error-handling mechanisms of the Booking Agent.
 
-## 1. The "Sniper" Algorithm
+## 1. The Booking Lifecycle
 
-The system does not simply "try to book". It calculates the exact millisecond a window opens and executes a synchronized attack.
+The system operates on a continuous scanning loop driven by the `Scheduler`, delegating specific tasks to specialized Services (`CalendarManager`, `BookingManager`, `AgentManager`).
 
-### Preparation Phase
-1.  **Target Calculation**: The `Scheduler` iterates through `bookings.json`, filters out past/completed slots, and identifies the slot with the *earliest* opening time.
-2.  **The Wait**:
-    *   **Long Sleep**: If the target is > 60 seconds away, the process sleeps until `T - 60s`.
-    *   **Wake & Sync**: At `T - 60s`, the system wakes up and **re-authenticates the entire user pool** to ensure fresh cookies/sessions.
-    *   **Precision Sleep**: It then enters a final sleep until `T - 5s` (5 seconds before opening) to account for any network latency or clock drift.
+### Phase 1: Discovery (CalendarScanning)
+1.  **Poll**: The `Scheduler` triggers `CalendarManager.scan_for_bookings()` every few seconds.
+2.  **Filter**: It looks for "Booking" events in the next `CALENDAR_SCAN_DAYS`.
+3.  **Parse**: Converts event times to `BookingRequest` objects, calculating the target `opening_time` (7 days prior + 1 hour).
+4.  **Ready Check**: The Scheduler processes requests that are currently valid or opening soon.
 
-### The Attack Loop
-At `T - 5s`, the system initiates the request loop. This loop runs at maximum speed until success or timeout.
+### Phase 2: Orchestration
+1.  **Status Update**: The event on Google Calendar is marked as **PROCESSING** (Yellow).
+2.  **Execution**: The `Scheduler` passes the request to `BookingManager.attempt_booking`.
 
-*   **Concurrency**: The system is single-threaded for the *booking logic* to effectively manage state (room availability/user quotas) but uses multi-threading for the initial *login phase*.
-*   **Retry Strategy**: If an attempt fails due to "Window Not Open Yet" (common in the first few seconds), it sleeps for `0.5s` and retries immediately.
+### Phase 3: The Attack Loop (BookingManager)
+The `BookingManager` executes a high-frequency loop to secure the slot:
 
-## 2. Decision Logic & Coping Mechanisms
+1.  **Room Strategy**: Iterates through **High Priority** rooms first, then **Low Priority**.
+2.  **Agent Strategy**: Uses `AgentManager` to retrieve a pool of authenticated agents.
+    -   *Logic*: Can prioritize the "Last Successful User" to maintain session persistence.
+    -   *Rotation*: If a user hits a quota (`USER_LIMIT`), they are temporarily removed from the pool for this attempt.
+3.  **Retry Mechanism**:
+    -   **TOO_EARLY**: If the window isn't open yet, it retries immediately (effectively "waiting" for the millisecond it opens).
+    -   **ROOM_TAKEN**: Immediately switches to the next room in the priority list.
+    -   **Timeout**: Aborts after 120 seconds to prevent infinite loops.
 
-The system employs a specific hierarchy to handle dynamic failures.
+## 2. Decision Logic & Error Handling
 
-### A. Room Exhaustion Handling
-*   **Logic**: The system iterates through rooms in strict order: `High Priority Batch` -> `Low Priority Batch`.
-*   **Coping**: If a server response indicates `ROOM_TAKEN` (Conflict), the system **immediately abandons** that specific room ID and moves to the next iterator. It does *not* retry the same room.
+### A. Room Priority & Exhaustion
+*   **Structure**: Rooms are grouped into Batches (High vs Low).
+*   **Flow**: `(High Room 1 -> High Room 2 -> ...) -> (Low Room 1 -> ...)`
+*   **Constraint**: If a room returns `ROOM_TAKEN`, it is marked as failed for this attempt and skipped by subsequent agents.
 
-### B. User Quota Handling
-*   **Logic**: The system maintains a `set` of specific users who have returned `USER_LIMIT` errors for the current slot.
-*   **Coping**:
-    *   If Agent A returns `USER_LIMIT`, Agent A is added to the "Exhausted" set.
-    *   The loop continues to Agent B *without changing the room*.
-    *   The priority is always **Last Successful User** -> **Next Available User**.
+### B. User Quota Management
+*   **Detection**: Server returns error `"user has reached their booking limit"`.
+*   **Action**: The `BookingManager` adds the agent's email to an `exhausted_emails` set.
+*   **Result**: The loop continues with the next available agent for the *same* room (if not taken) or next room.
 
-### C. Consecutive Booking Optimization
-Before sending a `create` request, the system checks `booking_history.json`:
-*   **Condition**: Is there a successful booking for [Same User] + [Same Room] ending at [Current Start Time]?
-*   **Action**: If yes, send `api/reservation.php?action=update` to **extend** the end time instead of creating a new ID.
-*   **Fallback**: If the extension fails (e.g., total duration limit), the system catches the error and immediately falls back to the standard `create` flow.
-
-### D. Timeout Safety
-*   **Hard Limit**: If the loop runs for more than **120 seconds**, the system assumes all resources are gone or the system is down. It aborts to prevent an infinite loop and logs a `Timeout` failure.
+### C. Multi-Hour Logic (Splitting)
+*   **Scenario**: User requests a 2-hour block (e.g., 10:00-12:00), but only 10:00-11:00 is successfully booked.
+*   **Action**:
+    1.  `BookingManager` returns success for the first hour.
+    2.  `Scheduler` detects the duration difference.
+    3.  `CalendarManager.split_event()` is called:
+        -   Creates a **Success** event for 10:00-11:00 (Green).
+        -   Updates the original "Booking" event to start at 11:00 (remains actionable).
 
 ## 3. Visual Logic Flow
+
+### A. Orchestration Flow (Scheduler)
+
+This diagram illustrates how the Scheduler discovers and dispatches booking requests.
 
 ```mermaid
 flowchart TD
@@ -53,41 +63,107 @@ flowchart TD
     classDef success fill:#E8F5E9,stroke:#2E7D32,stroke-width:3px,color:#000;
     classDef fail fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#000;
 
-    linkStyle default stroke:#546E7A,stroke-width:2px;
+    Start([Start Scan Loop]) --> ScanCall["Call CalendarManager.scan_for_bookings()"]:::process
+    ScanCall --> FoundEvents{Found Events?}:::decision
+    
+    FoundEvents -- No --> Sleep["Sleep (Interval)"]:::process
+    Sleep --> Start
+    
+    FoundEvents -- Yes --> Iterate[Iterate Request]:::process
+    Iterate --> TimeCheck{Target Time Reached?}:::decision
+    
+    TimeCheck -- No (>60s) --> WaitLong["Sleep until T-60s"]:::process
+    WaitLong --> ReLogin["Re-Login Agents"]:::process
+    ReLogin --> WaitShort["Sleep until T-5s"]:::process
+    
+    TimeCheck -- Yes (<60s) --> ReLogin
+    WaitShort --> MarkProcessing["Mark Calendar: PROCESSING"]:::process
+    
+    MarkProcessing --> Dispatch["Call BookingManager.attempt_booking()"]:::process
+    Dispatch --> Result{"Result?"}:::decision
+    
+    Result -- "Success" --> SplitLogic[Go to C: Result Logic]:::process
+    Result -- "Failure" --> MarkFail["Mark Calendar: FAILURE"]:::fail
+    MarkFail --> Iterate
+    SplitLogic --> Iterate
+```
 
-    Start([Wake Up T-5s]) --> LoopStart{"Start High-Frequency<br/>Loop"}:::decision
+### B. Booking Loop (BookingManager)
 
-    LoopStart --> SelectRoom["Select Target Room<br/>(High -> Low Priority)"]:::process
-    
-    SelectRoom --> SelectUser["Select User<br/>(Last Success -> Next)"]:::process
-    
-    SelectUser --> CheckExtension{"Can Extend<br/>Previous?"}:::decision
-    
-    CheckExtension -- Yes --> AttemptExt["Attempt UPDATE"]:::process
-    CheckExtension -- No --> AttemptNew["Attempt CREATE"]:::process
-    
-    AttemptExt --> Result{"Result?"}:::decision
-    AttemptNew --> Result
-    
-    %% --- SUCCESS ---
-    Result -- "Success" --> LogSuccess["Log Success"]:::success
-    LogSuccess --> End([End]):::success
+This diagram details the core "attack" logic, including retry mechanisms and error handling.
 
-    %% --- FAILURES ---
-    Result -- "Room Taken" --> TryNextRoom{"More Rooms?"}:::decision
-    TryNextRoom -- Yes --> SelectRoom
-    TryNextRoom -- No --> FailSlot["Log: All Rooms Taken"]:::fail
-    FailSlot --> End
+```mermaid
+flowchart TD
+    %% --- STYLING ---
+    classDef process fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000;
+    classDef decision fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000;
+    classDef fail fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#000;
+    classDef success fill:#E8F5E9,stroke:#2E7D32,stroke-width:3px,color:#000;
 
-    Result -- "User Limit" --> TryNextUser{"More Users?"}:::decision
-    TryNextUser -- Yes --> SelectUser
-    TryNextUser -- No --> FailUsers["Log: Pool Exhausted"]:::fail
-    FailUsers --> End
+    Start([Start Attempt]) --> InitVars[Reset Failed Rooms & Exhausted Users]:::process
     
-    Result -- "Extension Failed" --> AttemptNew
+    InitVars --> TimeCheck{Timeout > 120s?}:::decision
+    TimeCheck -- Yes --> FailTime["Return: TIMEOUT"]:::fail
+    TimeCheck -- No --> CheckAllFailed{All Rooms Failed?}:::decision
+    
+    CheckAllFailed -- Yes --> FailAll["Return: ROOM_TAKEN"]:::fail
+    CheckAllFailed -- No --> BatchHigh["Load High Priority Rooms"]:::process
+    
+    BatchHigh --> LoopRooms{Iterate Rooms}:::decision
+    LoopRooms -- Next --> CheckFailedRoom{Is Room Failed?}:::decision
+    CheckFailedRoom -- Yes --> LoopRooms
+    CheckFailedRoom -- No --> LoopAgents{Iterate Agents}:::decision
+    
+    LoopAgents -- Next --> CheckExhausted{Is User Exhausted?}:::decision
+    CheckExhausted -- Yes --> LoopAgents
+    CheckExhausted -- No --> Attempt["API: Create Reservation"]:::process
+    
+    Attempt --> Result{"API Result?"}:::decision
+    
+    Result -- "SUCCESS" --> Success["Return: SUCCESS"]:::success
+    
+    Result -- "ROOM_TAKEN" --> MarkRoomFailed["Add to Failed Rooms"]:::fail
+    MarkRoomFailed --> LoopRooms
+    
+    Result -- "USER_LIMIT" --> MarkUserExhausted["Add to Exhausted Users"]:::fail
+    MarkUserExhausted --> LoopAgents
+    
+    Result -- "TOO_EARLY" --> Wait["Sleep 0.5s"]:::process
+    Wait --> TimeCheck
+    
+    LoopAgents -- Done --> LoopRooms
+    LoopRooms -- Done --> LoadLow[Load Low Priority Rooms]:::process
+    LoadLow --> LoopRooms
+```
 
-    Result -- "Retry/Wait" --> TimeCheck{"Time > 120s?"}:::decision
-    TimeCheck -- No --> LoopStart
-    TimeCheck -- Yes --> FailTime["Log: Timeout"]:::fail
-    FailTime --> End
+### C. Result & Split Logic (Post-Booking)
+
+This diagram shows how the system handles the result of a booking attempt, specifically focusing on multi-hour event splitting.
+
+```mermaid
+flowchart TD
+    %% --- STYLING ---
+    classDef process fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000;
+    classDef decision fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000;
+    classDef success fill:#E8F5E9,stroke:#2E7D32,stroke-width:3px,color:#000;
+    classDef fail fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#000;
+
+    Start([Booking Result Received]) --> CheckSuccess{Is Success?}:::decision
+    
+    CheckSuccess -- No --> UpdateFail["Update Event: RED (Failure Message)"]:::fail
+    UpdateFail --> End([End])
+    
+    CheckSuccess -- Yes --> CalcDuration["Calculate Booking Duration"]:::process
+    CalcDuration --> CheckSplit{Duration > 1h?}:::decision
+    
+    CheckSplit -- No (Exact Match) --> UpdateSuccess["Update Event: GREEN (Room & Ref)"]:::success
+    UpdateSuccess --> End
+    
+    CheckSplit -- Yes (Partial) --> CallSplit["Call CalendarManager.split_event()"]:::process
+    
+    CallSplit --> CreateBooked["Create New Event: 1h BOOKED (Green)"]:::success
+    CallSplit --> UpdateOriginal["Update Original Event: Shift Start Time +1h"]:::process
+    
+    CreateBooked --> End
+    UpdateOriginal --> End
 ```

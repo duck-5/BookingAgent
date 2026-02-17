@@ -36,11 +36,10 @@ Each user account has limits:
 - Exhaust all users before giving up
 - `BookingResult.USER_LIMIT` triggers user rotation
 
-### Consecutive Booking Extension
-When a user already has a booking ending at the target start time:
-- **Old Behavior**: Extend existing booking (update API)
-- **Current Behavior**: Simplified to always create new booking
-- **Potential**: Extension logic exists but commented/simplified in recent refactor
+### Consecutive Booking Strategy
+- **Behavior**: The system treats each hour as a separate booking attempt.
+- **Handling**: If multiple hours are requested via one Calendar event, the system (via `scheduler.py` and `calendar_manager.py`) detects successful partial bookings and splits the calendar event accordingly.
+- **Legacy**: Older versions supported "extending" a single reservation ID, but this is currently replaced by the robustness of individual slot booking.
 
 ## Room Priority Hierarchy
 

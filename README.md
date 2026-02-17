@@ -1,9 +1,15 @@
 # Automated Library Booking Agent
 
 ## Overview
-This project is an automated "sniping" system designed to secure high-demand library study rooms immediately upon their release. The system monitors a university booking schedule and employs a pool of user accounts to book rooms the instant the reservation window opens (typically 7 days in advance).
+This project is a Python-based automation tool for booking library rooms. It integrates with **Google Calendar** to allow users to schedule, monitor, and manage bookings directly from their calendar interface.
 
-## Key Features
+The system uses a **Service-Oriented Architecture**:
+-   **Scheduler**: Orchestrates background tasks.
+-   **Services**: `AgentManager`, `BookingManager`, `CalendarManager` handle logic.
+-   **Clients**: Wrappers for University and Google APIs.
+-   **Dashboard**: Real-time web UI for monitoring.
+
+## Features
 *   **Precision Timing**: Calculates the exact millisecond a booking window opens and schedules the execution accordingly.
 *   **User Pool Management**: Rotates through a configured list of user accounts to bypass individual booking quotas (e.g., daily/weekly limits).
 *   **Priority System**:

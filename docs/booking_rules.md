@@ -10,7 +10,7 @@ This document outlines the high-level business rules that valid reservations mus
 ## 2. Reservation Constraints
 *   **Duration**: Bookings are typically made in hourly intervals.
 *   **Quotas**: Individual user accounts have limits on how many hours they can book per day or week. The system is aware of this and must rotate users to fulfill longer requirements.
-*   **Consecutive Slots**: If a single user needs to book multiple contiguous hours (e.g., 10:00-12:00), the system prefers to **extend** the first reservation rather than creating two separate 1-hour bookings. This reduces the number of reservation entries and check-in requirements.
+*   **Consecutive Slots**: If a user needs to book multiple contiguous hours (e.g., 10:00-12:00), the system will attempt to book them sequentially. If only the first hour is secured, the system handles existing multi-hour event splitting.
 
 ## 3. Resource Priority
 *   **Room Hierarchy**: Not all rooms are equal. There is a predefined list of "High Priority" rooms (e.g., specific floors or wings) that must be attempted first. "Low Priority" rooms are only used as a fallback.

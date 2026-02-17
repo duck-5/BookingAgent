@@ -6,30 +6,28 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                          USER LAYER                              │
 ├─────────────────────────────────────────────────────────────────┤
-│  bookings.json  │  credentials.json  │  Google Calendar Events  │
+│    dashboard    │  credentials.json  │  Google Calendar Events   │
 └────────┬─────────────────┬──────────────────────┬───────────────┘
          │                 │                       │
          ▼                 ▼                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       SCHEDULER (scheduler.py)                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │Calendar Scan │  │Timing Logic  │  │Agent Manager │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         └──────────────────┴──────────────────┘                 │
-└────────┬────────────────────────────────────────┬───────────────┘
-         │                                        │
-         ▼                                        ▼
-┌─────────────────────────┐         ┌─────────────────────────────┐
-│  BOOKING AGENT          │         │  GOOGLE CALENDAR CLIENT      │
-│  (booking_agent.py)     │         │  (utils/google_calendar.py)  │
-│  ┌──────────────────┐   │         │  ┌──────────────────┐        │
-│  │ Session Manager  │   │         │  │ OAuth Handler    │        │
-│  │ CSRF Handler     │   │         │  │ Event CRUD       │        │
-│  │ API Requests     │   │         │  │ CalendarSync     │        │
-│  └──────────────────┘   │         │  └──────────────────┘        │
-└────────┬────────────────┘         └────────┬────────────────────┘
-         │                                    │
-         ▼                                    ▼
+│                     (Service Orchestrator)                      │
+└─────┬──────────────────────────┬───────────────────────────┬────┘
+      │                          │                           │
+      ▼                          ▼                           ▼
+┌─────────────┐        ┌──────────────────┐        ┌────────────────┐
+│AgentManager │        │ BookingManager   │        │CalendarManager │
+│(Pool)       │        │ (Logic & Retry)  │        │(Scanner)       │
+└─────┬───────┘        └─────────┬────────┘        └──────┬─────────┘
+      │                          │                        │
+      ▼                          ▼                        ▼
+┌─────────────┐        ┌──────────────────┐        ┌────────────────┐
+│ TauClient   │        │ TauClient        │        │ GoogleCalClient│
+│ (Login)     │        │ (Book/Delete)    │        │ (API)          │
+└─────┬───────┘        └─────────┬────────┘        └──────┬─────────┘
+      │                          │                        │
+      ▼                          ▼                        ▼
 ┌─────────────────────────┐         ┌─────────────────────────────┐
 │  TAU BOOKING SERVER     │         │  GOOGLE CALENDAR API         │
 │  schedule.tau.ac.il     │         │  calendar.googleapis.com     │
@@ -38,77 +36,56 @@
 
 ## Data Flow
 
-### Flow 1: Proactive Booking (Original Mode)
-```
-1. Scheduler reads bookings.json
-2. Calculates next opening time (7 days - 1 hour)
-3. Sleeps until T-60 seconds
-4. Initializes all agents (login)
-5. Waits until T-5 seconds
-6. Attempts booking:
-   - Try High Priority rooms first
-   - Rotate users on quota/failure
-   - Retry on "TOO_EARLY"
-7. Log result to system.log
-```
-
-### Flow 2: Calendar-Driven Booking
+### Flow 1: Calendar-Driven Booking
 ```
 1. User creates event in Google Calendar: "Booking: Study Session"
-2. Scheduler scans calendar (every cycle)
-3. Finds unprocessed event (no [P] prefix)
-4. Marks event YELLOW (Processing)
-5. Calculates opening time from event start
-6. Executes booking attempt
-7. Updates event:
+2. Scheduler._scan_loop triggers CalendarManager.scan_for_bookings()
+3. CalendarManager parses events and returns BookingRequest objects
+4. Scheduler calls BookingManager.attempt_booking(request)
+5. BookingManager:
+   - Selects Agent from AgentManager
+   - Tries High/Low priority rooms
+   - Connects via TauClient to book
+6. CalendarManager.update_event_status():
    SUCCESS → GREEN + [P] prefix + room metadata
    FAILURE → RED + [P] prefix + error message
 ```
 
-### Flow 3: Server → Calendar Sync
+### Flow 2: Server → Calendar Sync
 ```
-1. CalendarSync.sync_all_users() runs periodically
-2. For each user:
-   - Login to booking server
-   - Fetch events from my-calendar.php (SID 1-5)
-   - Filter by className: "mine", "coowner", "participating"
-3. Compare with existing Google Calendar events
-4. Create missing events with [S] prefix, GREEN color
-5. Include User, Room, and Ref in description
+1. Scheduler._sync_worker runs periodically
+2. Calls CalendarSync.sync_all_users()
+3. For each user (via TauClient):
+   - Fetch events (SID 1-5)
+4. Compare with Google Calendar
+5. Create [S] events for missing items
 ```
 
-### Flow 4: DELETE Request Processing
+### Flow 3: DELETE Request Processing
 ```
 1. User adds "DELETE" keyword to event title
-2. Scheduler._process_delete_requests() runs every 5 minutes
-3. Finds events with DELETE + ([P] or [S] prefix)
-4. Extracts reference number from description
-5. Calls BookingAgent.delete_booking(ref_num)
-6. On success:
-   - Remove DELETE keyword
-   - Change prefix to [DELETED]
-   - Set color to RED
-   - Append deletion timestamp
+2. Scheduler._sync_worker triggers CalendarManager.scan_for_deletions()
+3. Returns DeletionRequest objects
+4. Scheduler calls BookingManager.cancel_booking(request)
+   - Finds owner's agent
+   - Calls TauClient.delete_booking()
+5. CalendarManager updates event to [DELETED] (Gray)
 ```
 
 ## Thread Architecture
 
 ### Main Thread
-- Runs `Scheduler.run()` infinite loop
-- Handles primary booking logic
-- Sleeps between booking windows
+-   Runs `Scheduler.run()` -> `_scan_loop()`
+-   Orchestrates scanning and booking via Managers
 
 ### Sync Daemon Thread
-- Background worker: `_sync_worker()`
-- Runs every `SYNC_INTERVAL_SECONDS` (default: 300s)
-- Pauses during active booking attempts
-- Calls `CalendarSync.sync_all_users()`
+-   Background worker: `_sync_worker()`
+-   Runs Sync logic and Delete logic sequentially
+-   Pauses when `_booking_in_progress` is set
 
-### Delete Daemon Thread
-- Background worker: `delete_worker()`
-- Runs every `DELETE_CHECK_INTERVAL` (default: 300s)
-- Scans calendar for DELETE keywords
-- Processes deletion requests
+### Dashboard Thread (New)
+-   Runs `uvicorn` (FastAPI)
+-   Serves monitoring UI at `http://localhost:8000`
 
 ### Thread Synchronization
 - Uses `threading.Event`: `_booking_in_progress`
