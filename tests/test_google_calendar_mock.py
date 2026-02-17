@@ -6,19 +6,19 @@ import os
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.google_calendar import GoogleCalendarClient, CalendarSync
+from clients.google_calendar import GoogleCalendarClient, CalendarSync
 import config
 
 @pytest.fixture
 def mock_calendar_service():
-    with patch('utils.google_calendar.build') as mock_build:
+    with patch('clients.google_calendar.build') as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
         yield mock_service
 
 @pytest.fixture
 def mock_creds():
-    with patch('utils.google_calendar.Credentials') as mock_creds_cls:
+    with patch('clients.google_calendar.Credentials') as mock_creds_cls:
         mock_creds_instance = MagicMock()
         mock_creds_instance.valid = True
         mock_creds_cls.from_authorized_user_file.return_value = mock_creds_instance
@@ -41,7 +41,7 @@ class TestGoogleCalendarClient:
 
     def test_authenticate_failure_build_error(self, mock_creds):
         with patch('os.path.exists', return_value=True), \
-             patch('utils.google_calendar.build', side_effect=Exception("Build Error")):
+             patch('clients.google_calendar.build', side_effect=Exception("Build Error")):
             
             client = GoogleCalendarClient()
             result = client.authenticate()
@@ -102,8 +102,10 @@ class TestGoogleCalendarClient:
 
 @pytest.fixture
 def mock_calendar_sync_deps():
-    with patch('utils.google_calendar.GoogleCalendarClient') as mock_gc_cls, \
-         patch('booking_agent.BookingAgent') as mock_agent_cls, \
+    with patch('clients.google_calendar.GoogleCalendarClient') as mock_gc_cls, \
+         patch('clients.google_calendar.build') as mock_build, \
+         patch('clients.google_calendar.Credentials') as mock_creds, \
+         patch('clients.google_calendar.TauClient') as mock_tau_cls, \
          patch('builtins.open', new_callable=MagicMock) as mock_open:
              
         mock_gc = mock_gc_cls.return_value
@@ -128,12 +130,12 @@ class TestCalendarSync:
     def test_sync_all_users_basic(self, mock_calendar_sync_deps):
         deps = mock_calendar_sync_deps
         mock_gc = deps['gc']
-        mock_agent = deps['agent_cls'].return_value
+        mock_tau = deps['mock_tau_cls'].return_value
         
         # Mock Agent Login
-        mock_agent.login.return_value = True
-        mock_agent.BASE_URL = "http://test"
-        mock_agent.session = MagicMock()
+        mock_tau.login.return_value = True
+        mock_tau.BASE_URL = "http://test"
+        mock_tau.session = MagicMock()
         
         # Mock Server Response (my-calendar.php)
         mock_response = MagicMock()
@@ -164,11 +166,11 @@ class TestCalendarSync:
     def test_sync_all_users_duplicate_check(self, mock_calendar_sync_deps):
         deps = mock_calendar_sync_deps
         mock_gc = deps['gc']
-        mock_agent = deps['agent_cls'].return_value
+        mock_tau = deps['mock_tau_cls'].return_value
         
-        mock_agent.login.return_value = True
-        mock_agent.BASE_URL = "http://test"
-        mock_agent.session = MagicMock()
+        mock_tau.login.return_value = True
+        mock_tau.BASE_URL = "http://test"
+        mock_tau.session = MagicMock()
         
         # Mock Server Response
         mock_response = MagicMock()

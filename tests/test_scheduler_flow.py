@@ -51,7 +51,7 @@ class TestSchedulerFlow(unittest.TestCase):
             original_event={}, owner_email="test@tau.ac.il"
         )
         self.scheduler.calendar_manager.scan_for_deletions.return_value = [req]
-        self.scheduler.booking_manager.cancel_booking.return_value = True
+        self.scheduler.booking_manager.cancel_booking.return_value = (True, "Deleted")
 
         # Trigger Sync Logic manually (bypass threading)
         # We simulate what _sync_worker does inside the loop
@@ -60,7 +60,7 @@ class TestSchedulerFlow(unittest.TestCase):
         delete_requests = self.scheduler.calendar_manager.scan_for_deletions()
         if delete_requests:
             for r in delete_requests:
-                success = self.scheduler.booking_manager.cancel_booking(r)
+                success, reason = self.scheduler.booking_manager.cancel_booking(r)
                 if success:
                     self.scheduler.calendar_manager.update_event_status(
                         r.event_id, CalendarStatus.DELETED, r.original_event
@@ -98,6 +98,7 @@ class TestSchedulerFlow(unittest.TestCase):
             self.scheduler.calendar_manager.update_event_status(
                 r.event_id, CalendarStatus.PROCESSING, r.original_event
             )
+            # Pass stop_event=None as we are mocking it or verify it handles it
             result, details = self.scheduler.booking_manager.attempt_booking(r)
             
             if result == BookingResult.SUCCESS:

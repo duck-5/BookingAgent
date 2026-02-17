@@ -1,4 +1,4 @@
-from utils.google_calendar import GoogleCalendarClient
+from clients.google_calendar import GoogleCalendarClient
 from datetime import datetime, timedelta
 import logging
 
