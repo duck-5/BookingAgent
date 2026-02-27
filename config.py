@@ -43,7 +43,10 @@ LOW_PRIORITY_ROOMS = {
     23: "Room 13",
     24: "Room 14",
     25: "Room 15",
-    26: "Room 16"
+    26: "Room 16",
+    27: "Room 17",
+    28: "Room 18",
+    29: "Room 19",
 }
 
 # Combined for lookup
