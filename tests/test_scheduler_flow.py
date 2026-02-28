@@ -197,6 +197,91 @@ class TestSchedulerFlow(unittest.TestCase):
             room_name="Room 108", ref_num="REF456", user="agent@tau.ac.il"
         )
 
+    def test_split_over_3_hours(self):
+        """Test that single requests over 3 hours are split into 3-hour chunks."""
+        now = datetime.now(timezone.utc)
+        start_dt = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        orig_event = {'start': {'dateTime': start_dt}, 'end': {'dateTime': (now + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")}}
+        req = BookingRequest(
+            event_id="evt5", summary="5 Hour Booking", 
+            start_time=now, end_time=now + timedelta(hours=5),
+            utc_start=start_dt, utc_end=(now + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            original_event=orig_event, 
+            opening_time=now - timedelta(days=7) # fully open
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        self.scheduler.calendar_manager.find_successful_booking.return_value = None
+        self.scheduler.booking_manager.attempt_booking.return_value = (BookingResult.SUCCESS, ("agent@tau.ac.il", "Room 101", "REF123"))
+
+        self.scheduler._scan_and_book_cycle()
+
+        # Should have called attempt_booking with a 3-hour request FIRST
+        args, kwargs = self.scheduler.booking_manager.attempt_booking.call_args_list[0]
+        called_req = args[0]
+        duration_called = (called_req.end_time - called_req.start_time).total_seconds() / 3600
+        self.assertEqual(duration_called, 3.0)
+        
+        # Second call should be the 2-hour remainder
+        args2, kwargs2 = self.scheduler.booking_manager.attempt_booking.call_args_list[1]
+        called_req2 = args2[0]
+        duration_called2 = (called_req2.end_time - called_req2.start_time).total_seconds() / 3600
+        self.assertAlmostEqual(duration_called2, 2.0, places=1)
+
+        # Should have called split_event
+        self.scheduler.calendar_manager.split_event.assert_called_once()
+
+    def test_combined_over_3_hours(self):
+        """Test that contiguous events over 3 hours total are NOT combined."""
+        now = datetime.now(timezone.utc)
+        req1 = BookingRequest(
+            event_id="evt6", summary="2H Part 1", 
+            start_time=now, end_time=now + timedelta(hours=2),
+            utc_start="U1", utc_end="U2", original_event={}, opening_time=now - timedelta(days=1)
+        )
+        req2 = BookingRequest(
+            event_id="evt7", summary="2H Part 2", 
+            start_time=now + timedelta(hours=2), end_time=now + timedelta(hours=4),
+            utc_start="U2", utc_end="U3", original_event={}, opening_time=now - timedelta(days=1)
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req1, req2]
+        self.scheduler.calendar_manager.find_successful_booking.return_value = None
+        self.scheduler.booking_manager.attempt_booking.return_value = (BookingResult.SUCCESS, ("a@tau.ac.il", "R1", "REF1"))
+
+        self.scheduler._scan_and_book_cycle()
+
+        # Should have called attempt_booking with just Part 1 (2 hours), NOT a 4 hour combined
+        args, kwargs = self.scheduler.booking_manager.attempt_booking.call_args
+        called_req = args[0]
+        self.assertEqual(called_req.summary, "2H Part 1") # Instead of Combined...
+
+    def test_graceful_degradation(self):
+        """Test that a 3H booking failing degrades into a 2H attempt."""
+        now = datetime.now(timezone.utc)
+        start_dt = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        orig_event = {'end': {'dateTime': (now + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")}}
+        req = BookingRequest(
+            event_id="evt8", summary="3 Hour Booking", 
+            start_time=now, end_time=now + timedelta(hours=3),
+            utc_start=start_dt, utc_end="U2", original_event=orig_event, opening_time=now - timedelta(days=7)
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        self.scheduler.calendar_manager.find_successful_booking.return_value = None
+
+        # Mock: First attempt (3h) fails with USER_LIMIT, Second attempt (2h) succeeds
+        self.scheduler.booking_manager.attempt_booking.side_effect = [
+            (BookingResult.USER_LIMIT, "User Quota Hit for 3h"),
+            (BookingResult.SUCCESS, ("b@tau.ac.il", "Room 102", "REF999"))
+        ]
+
+        self.scheduler._scan_and_book_cycle()
+
+        # Should have called attempt_booking TWICE
+        self.assertEqual(self.scheduler.booking_manager.attempt_booking.call_count, 2)
+        
+        # Should have split the remaining 1 hour
+        self.scheduler.calendar_manager.split_event.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()
 
