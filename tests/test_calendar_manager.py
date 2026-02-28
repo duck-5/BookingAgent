@@ -123,7 +123,7 @@ def test_update_event_status_deleted(calendar_manager, mock_google_client):
     
     body = kwargs['body']
     assert body['colorId'] == CalendarStatus.DELETED
-    assert "[DELETED]" in body['description']
+    assert "Deleted on:" in body['description']
 
 def test_split_event(calendar_manager, mock_google_client):
     orig_event = {

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Setup path
 sys.path.insert(0, os.getcwd())
@@ -12,11 +12,14 @@ from core.enums import BookingResult, CalendarStatus
 from core.entities import BookingRequest, DeletionRequest
 
 class TestSchedulerFlow(unittest.TestCase):
-
+    
     def setUp(self):
         # Patch config to avoid file loading issues
         self.config_patcher = patch('scheduler.config')
         self.mock_config = self.config_patcher.start()
+        self.mock_config.FINAL_WAKE_UP_SECONDS_BEFORE_OPENING = 5
+        self.mock_config.MAX_SINGLE_BOOKING_DURATION_HOURS = 3.0
+        self.mock_config.CALENDAR_POLL_INTERVAL_SECONDS = 300
         
         # Patch External Clients
         self.gc_patcher = patch('scheduler.GoogleCalendarClient')
@@ -53,78 +56,147 @@ class TestSchedulerFlow(unittest.TestCase):
         self.scheduler.calendar_manager.scan_for_deletions.return_value = [req]
         self.scheduler.booking_manager.cancel_booking.return_value = (True, "Deleted")
 
-        # Trigger Sync Logic manually (bypass threading)
-        # We simulate what _sync_worker does inside the loop
-        
         # 1. Process Deletes
-        delete_requests = self.scheduler.calendar_manager.scan_for_deletions()
-        if delete_requests:
-            for r in delete_requests:
-                success, reason = self.scheduler.booking_manager.cancel_booking(r)
-                if success:
-                    self.scheduler.calendar_manager.update_event_status(
-                        r.event_id, CalendarStatus.DELETED, r.original_event
-                    )
+        self.scheduler._process_deletions()
         
-        # 2. Sync
-        self.scheduler.syncer.sync_all_users()
-
-        # Assertions
+        # Verify Deletion Logic
+        self.scheduler.calendar_manager.scan_for_deletions.assert_called_once()
         self.scheduler.booking_manager.cancel_booking.assert_called_with(req)
         self.scheduler.calendar_manager.update_event_status.assert_called_with(
             "evt1", CalendarStatus.DELETED, {}
         )
+        
+        # 2. Sync
+        self.scheduler._perform_sync()
+        
+        # Verify Sync Logic
         self.scheduler.syncer.sync_all_users.assert_called_once()
 
     def test_scan_loop_booking_flow(self):
         """Test booking flow when a request is found."""
         # Setup Request
+        # Note: _scan_and_book_cycle filters out requests not yet open.
+        # We set opening_time to now-1s to ensure it's actionable.
+        orig_event = {'end': {'dateTime': datetime.now(timezone.utc).isoformat()}}
         req = BookingRequest(
             event_id="evt2", summary="Booking Room 1", 
             start_time=datetime.now(), end_time=datetime.now(),
             utc_start="2026-01-01T10:00:00Z", utc_end="2026-01-01T11:00:00Z",
-            original_event={}, opening_time=datetime.now()
+            original_event=orig_event, 
+            opening_time=datetime.now(timezone.utc) - timedelta(seconds=1)
         )
         self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        self.scheduler.calendar_manager.find_successful_booking.return_value = None
         
         # Mock Booking Success
         self.scheduler.booking_manager.attempt_booking.return_value = (
             BookingResult.SUCCESS, ("agent@tau.ac.il", "Room 101", "REF123")
         )
 
-        # Trigger Scan Logic (Simulate _scan_loop body)
-        requests = self.scheduler.calendar_manager.scan_for_bookings()
-        for r in requests:
-            self.scheduler.calendar_manager.update_event_status(
-                r.event_id, CalendarStatus.PROCESSING, r.original_event
-            )
-            # Pass stop_event=None as we are mocking it or verify it handles it
-            result, details = self.scheduler.booking_manager.attempt_booking(r)
-            
-            if result == BookingResult.SUCCESS:
-                agent, room, ref = details
-                # Check split logic (simplified)
-                duration = 1.0 
-                if duration > 1.1:
-                    self.scheduler.calendar_manager.split_event(...)
-                else:
-                    self.scheduler.calendar_manager.update_event_status(
-                        r.event_id, CalendarStatus.SUCCESS, r.original_event,
-                        room_name=room, ref_num=ref, user=agent
-                    )
+        # Trigger Scan Logic
+        self.scheduler._scan_and_book_cycle()
 
         # Assertions
         self.scheduler.calendar_manager.scan_for_bookings.assert_called()
-        self.scheduler.booking_manager.attempt_booking.assert_called_with(req)
+        args, kwargs = self.scheduler.booking_manager.attempt_booking.call_args
+        self.assertEqual(args[0], req)
+        self.assertEqual(kwargs.get('stop_event'), self.scheduler._stop_event)
         
         # Verify status updates
         self.scheduler.calendar_manager.update_event_status.assert_any_call(
-            "evt2", CalendarStatus.PROCESSING, {}
+            "evt2", CalendarStatus.PROCESSING, orig_event
         )
         self.scheduler.calendar_manager.update_event_status.assert_any_call(
-            "evt2", CalendarStatus.SUCCESS, {}, 
+            "evt2", CalendarStatus.SUCCESS, orig_event, 
             room_name="Room 101", ref_num="REF123", user="agent@tau.ac.il"
+        )
+
+    def test_extend_booking_flow(self):
+        """Test extending an existing booking."""
+        now = datetime.now(timezone.utc)
+        start_dt = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        orig_event = {'start': {'dateTime': start_dt}, 'end': {'dateTime': start_dt}}
+        req = BookingRequest(
+            event_id="evt3", summary="Extend Room 1", 
+            start_time=now, end_time=now + timedelta(hours=1),
+            utc_start="2026-01-01T11:00:00Z", utc_end="2026-01-01T12:00:00Z",
+            original_event=orig_event, 
+            opening_time=now - timedelta(seconds=1)
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        
+        # Mock finding a successful past booking
+        self.scheduler.calendar_manager.find_successful_booking.return_value = (
+            orig_event, "REF123", "agent@tau.ac.il", "Room 108"
+        )
+        
+        # Mock Agent Manager returning an agent
+        mock_agent = MagicMock()
+        mock_agent.is_logged_in = True
+        mock_agent.update_booking.return_value = (True, "Success")
+        self.scheduler.agent_manager.get_agent.return_value = mock_agent
+
+        # Config mock for room ID lookup
+        self.mock_config.ALL_ROOMS = {125: "Room 108"}
+        self.scheduler._scan_and_book_cycle()
+
+        # Assertions
+        mock_agent.update_booking.assert_called_once_with("REF123", 125, start_dt, "2026-01-01T12:00:00Z")
+        
+        # Since the _scan_and_book_cycle checks if req_end_utc < dt_orig_end for split, we bypass that here
+        self.scheduler.calendar_manager.update_event_status.assert_any_call(
+            "evt3", CalendarStatus.SUCCESS, orig_event, 
+            room_name="Room 108", ref_num="REF123", user="agent@tau.ac.il"
+        )
+
+    def test_consecutive_booking_fallback(self):
+        """Test fallback when extend fails but room booking succeeds."""
+        now = datetime.now(timezone.utc)
+        start_dt = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        orig_event = {'start': {'dateTime': start_dt}, 'end': {'dateTime': start_dt}}
+        req = BookingRequest(
+            event_id="evt4", summary="Booking Room 1", 
+            start_time=now, end_time=now + timedelta(hours=1),
+            utc_start="2026-01-01T11:00:00Z", utc_end="2026-01-01T12:00:00Z",
+            original_event=orig_event, 
+            opening_time=now - timedelta(seconds=1)
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        
+        # Mock finding a successful past booking
+        self.scheduler.calendar_manager.find_successful_booking.return_value = (
+            orig_event, "REF123", "agent@tau.ac.il", "Room 108"
+        )
+        
+        # Agent extend FAILS
+        mock_agent = MagicMock()
+        mock_agent.is_logged_in = True
+        mock_agent.update_booking.return_value = (False, "Too late")
+        self.scheduler.agent_manager.get_agent.return_value = mock_agent
+        
+        # Attempt booking SUCCEEDS for same room
+        # We need to spy on attempt_booking
+        self.scheduler.booking_manager.attempt_booking.return_value = (
+            BookingResult.SUCCESS, ("agent@tau.ac.il", "Room 108", "REF456")
+        )
+
+        self.mock_config.ALL_ROOMS = {125: "Room 108"}
+        self.scheduler._scan_and_book_cycle()
+
+        # Should have called agent.update_booking (it failed)
+        mock_agent.update_booking.assert_called_once()
+        
+        # Should have called attempt_booking with preferred_room_id = 125
+        args, kwargs = self.scheduler.booking_manager.attempt_booking.call_args
+        self.assertEqual(args[0], req)
+        self.assertEqual(kwargs.get('preferred_room_id'), 125)
+        
+        # Should mark success with NEW ref num (REF456)
+        self.scheduler.calendar_manager.update_event_status.assert_any_call(
+            "evt4", CalendarStatus.SUCCESS, orig_event, 
+            room_name="Room 108", ref_num="REF456", user="agent@tau.ac.il"
         )
 
 if __name__ == '__main__':
     unittest.main()
+

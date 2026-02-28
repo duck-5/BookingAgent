@@ -29,7 +29,12 @@ def client(mock_session):
     return TauClient(creds)
 
 def test_login_success(client, mock_session):
-    mock_session.cookies = {'login_token': 'abc'}
+    # Setup post side_effect to populate cookies AFTER clear() is called
+    def post_side_effect(*args, **kwargs):
+        mock_session.cookies = {'login_token': 'abc'}
+        return MagicMock()
+    
+    mock_session.post.side_effect = post_side_effect
     
     result = client.login()
     
@@ -50,6 +55,8 @@ def test_book_room_success(client, mock_session):
     
     with patch.object(client, 'get_csrf_token', return_value="fake_token"):
         mock_response = MagicMock()
+        mock_response.content = b'{"success": true}'
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "success": True,
             "data": {"referenceNumber": "123456"}
@@ -67,19 +74,24 @@ def test_book_room_failure_generic(client, mock_session):
     
     with patch.object(client, 'get_csrf_token', return_value="fake_token"):
         mock_response = MagicMock()
+        mock_response.content = b'{"success": false}'
+        mock_response.status_code = 200
         mock_response.json.return_value = {"success": False}
         mock_session.post.return_value = mock_response
 
         status, ref = client.book_room(123, "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
         
         assert status == BookingResult.ERROR
-        assert ref is None
+        assert ref is not None
+        assert "Server Error" in ref
 
 def test_book_room_room_taken(client, mock_session):
     client.is_logged_in = True
     
     with patch.object(client, 'get_csrf_token', return_value="fake_token"):
         mock_response = MagicMock()
+        mock_response.content = b'{"success": false}'
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "success": False,
             "data": {"errors": ["conflicting booking"]}
@@ -122,3 +134,41 @@ def test_delete_booking_failure(client, mock_session):
         
         assert result is False
         assert "Invalid Ref" in msg
+
+def test_update_booking_success(client, mock_session):
+    client.is_logged_in = True
+    
+    with patch.object(client, 'get_csrf_token', return_value="fake_token"):
+        mock_response = MagicMock()
+        mock_response.content = b'{"success": true}'
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": True,
+            "data": {"referenceNumber": "123456"}
+        }
+        mock_session.post.return_value = mock_response
+
+        status, msg = client.update_booking("123456", 123, "2026-01-01T10:00:00Z", "2026-01-01T12:00:00Z")
+        
+        assert status is True
+        assert msg == "123456"
+
+def test_update_booking_failure(client, mock_session):
+    client.is_logged_in = True
+    
+    with patch.object(client, 'get_csrf_token', return_value="fake_token"):
+        mock_response = MagicMock()
+        mock_response.content = b'{"success": false}'
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": False,
+            "data": {"errors": ["Invalid end time"]}
+        }
+        mock_session.post.return_value = mock_response
+
+        status, msg = client.update_booking("123456", 123, "2026-01-01T10:00:00Z", "2026-01-01T12:00:00Z")
+        
+        assert status is False
+        assert msg is not None
+        assert "Invalid end time" in msg
+

@@ -105,7 +105,7 @@ def mock_calendar_sync_deps():
     with patch('clients.google_calendar.GoogleCalendarClient') as mock_gc_cls, \
          patch('clients.google_calendar.build') as mock_build, \
          patch('clients.google_calendar.Credentials') as mock_creds, \
-         patch('clients.google_calendar.TauClient') as mock_tau_cls, \
+         patch('clients.tau_client.TauClient') as mock_tau_cls, \
          patch('builtins.open', new_callable=MagicMock) as mock_open:
              
         mock_gc = mock_gc_cls.return_value
@@ -114,10 +114,11 @@ def mock_calendar_sync_deps():
         
         # Mock json load for users
         import json
-        with patch('json.load', return_value=[{'email': 'test@example.com'}]):
+        import json
+        with patch('json.load', return_value=[{'email': 'test@example.com', 'password': 'p', 'owner_id': '1'}]):
              yield {
                  'gc': mock_gc,
-                 'agent_cls': mock_agent_cls,
+                 'agent_cls': mock_tau_cls,
                  'open': mock_open
              }
 
@@ -130,7 +131,7 @@ class TestCalendarSync:
     def test_sync_all_users_basic(self, mock_calendar_sync_deps):
         deps = mock_calendar_sync_deps
         mock_gc = deps['gc']
-        mock_tau = deps['mock_tau_cls'].return_value
+        mock_tau = deps['agent_cls'].return_value
         
         # Mock Agent Login
         mock_tau.login.return_value = True
@@ -147,7 +148,7 @@ class TestCalendarSync:
             'end': '2026-02-14 12:00',
             'className': 'mine'
         }]
-        mock_agent.session.get.return_value = mock_response
+        mock_tau.session.get.return_value = mock_response
         
         # Mock Google Calendar Events (Empty to trigger add)
         mock_gc.service.events().list.return_value.execute.return_value = {'items': []}
@@ -166,7 +167,7 @@ class TestCalendarSync:
     def test_sync_all_users_duplicate_check(self, mock_calendar_sync_deps):
         deps = mock_calendar_sync_deps
         mock_gc = deps['gc']
-        mock_tau = deps['mock_tau_cls'].return_value
+        mock_tau = deps['agent_cls'].return_value
         
         mock_tau.login.return_value = True
         mock_tau.BASE_URL = "http://test"
@@ -182,7 +183,7 @@ class TestCalendarSync:
             'end': '2026-02-14 12:00',
             'className': 'mine'
         }]
-        mock_agent.session.get.return_value = mock_response
+        mock_tau.session.get.return_value = mock_response
         
         # Mock Existing Google Event (Formatted as Synced)
         mock_gc.service.events().list.return_value.execute.return_value = {
