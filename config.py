@@ -3,8 +3,7 @@ import os
 
 # --- Configuration ---
 CREDENTIALS_FILE = "credentials.json"
-BOOKINGS_FILE = "bookings.json"
-HISTORY_FILE = "booking_history.json"
+
 LOG_FILE = "system.log"
 
 # Google Calendar
@@ -14,22 +13,21 @@ GOOGLE_CALENDAR_ID = 'primary'
 CALENDAR_NAME = "Library Bookings"
 CALENDAR_SCAN_DAYS = 8
 
-SYNC_INTERVAL_SECONDS = 30  # 1 hour
-CALENDAR_POLL_INTERVAL_SECONDS = 30 # 5 minutes
+SYNC_INTERVAL_SECONDS = 300  # 1 hour
+CALENDAR_POLL_INTERVAL_SECONDS = 300 # 5 minutes
+
+# Booking constraints
+MAX_SINGLE_BOOKING_DURATION_HOURS = 3.0
+
+# Timing constraints
+LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING = 60
+FINAL_WAKE_UP_SECONDS_BEFORE_OPENING = 5
+BOOKING_RETRY_INTERVAL_SECONDS = 0.5
+BOOKING_TIMEOUT_SECONDS = 120
+MAX_SINGLE_BOOKING_DURATION_HOURS = 3
 
 # Delete Feature
 DELETE_KEYWORD = "DELETE"  # Keyword to search for in event titles (case-insensitive)
-DELETE_CHECK_INTERVAL = 30  # 5 minutes
-
-# Calendar Status / Colors
-class CalendarStatus:
-    PROCESSING = '5'   # Yellow
-    SUCCESS = '10'     # Green
-    SYNCED = '10'      # Green (same as SUCCESS)
-    FAILURE = '11'     # Red
-    DELETED = '8'      # Gray
-
-
 # High Priority: The preferred rooms (e.g., Ground Floor / New Wing)
 HIGH_PRIORITY_ROOMS = {
     125: "Room 108",

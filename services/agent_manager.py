@@ -24,7 +24,7 @@ class AgentManager:
                 data = json.load(f)
                 credentials = [UserCredentials(**u) for u in data]
                 
-            logger.info(f"[AGENT_MGR] Initializing {len(credentials)} agents...")
+            logger.info(f"[AGENT] Initializing {len(credentials)} agents...")
             
             temp_agents = [TauClient(c) for c in credentials]
             
@@ -35,25 +35,27 @@ class AgentManager:
                     try:
                         success = future.result()
                     except Exception as e:
-                        logger.error(f"[AGENT_MGR] Login thread error for {agent.email}: {e}")
+                        logger.error(f"[AGENT] Login thread error for {agent.email}: {e}")
                         success = False
                     
                     # Store agent regardless of success, so we can show "Failed" in dashboard
                     self.agents.append(agent)
                     
                     if not success:
-                         logger.warning(f"[AGENT_MGR] Failed to login: {agent.email}")
+                         logger.warning(f"[AGENT] Failed to login: {agent.email}")
 
-            logger.info(f"[AGENT_MGR] {len(self.agents)} Agents Initialized.")
+            logger.info(f"[AGENT] {len(self.agents)} Agents Initialized.")
             
         except Exception as e:
-            logger.error(f"[AGENT_MGR] Failed to load agents: {e}")
+            logger.error(f"[AGENT] Failed to load agents: {e}")
 
     def get_agent(self, email: str) -> Optional[TauClient]:
         return next((a for a in self.agents if a.email.lower() == email.lower()), None)
 
     def get_all_agents(self) -> List[TauClient]:
         return self.agents
+
+
 
     def get_rotational_agents(self, preferred_email: Optional[str] = None) -> List[TauClient]:
         """
@@ -65,4 +67,6 @@ class AgentManager:
             if priority:
                 active.remove(priority)
                 active.insert(0, priority)
+                
+        # Return all agents in order, prioritizing preferred_email if given
         return active

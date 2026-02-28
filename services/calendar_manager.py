@@ -1,5 +1,6 @@
 import logging
 import threading
+import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any, Tuple
 
@@ -14,6 +15,28 @@ class CalendarManager:
     def __init__(self, google_client: GoogleCalendarClient):
         self.client = google_client
         self.calendar_id = self.client.get_or_create_calendar(config.CALENDAR_NAME)
+
+    def _fetch_events(self, tmin: str, tmax: str, order_by_start: bool = False) -> List[Dict[str, Any]]:
+        kwargs = {
+            'calendarId': self.calendar_id,
+            'timeMin': tmin,
+            'timeMax': tmax,
+            'singleEvents': True
+        }
+        if order_by_start:
+            kwargs['orderBy'] = 'startTime'
+            
+        result = self.client.service.events().list(**kwargs).execute()
+        return result.get('items', [])
+
+    def _extract_ref_and_user(self, description: str) -> Tuple[Optional[str], Optional[str]]:
+        ref_match = re.search(r'Ref:\s*([A-Z0-9]+)', description)
+        ref_num = ref_match.group(1) if ref_match else None
+        
+        user_match = re.search(r'(?:Booked for )?User:\s*([^\s\n]+)', description)
+        user = user_match.group(1).strip() if user_match else None
+        
+        return ref_num, user
 
     def scan_for_bookings(self) -> List[BookingRequest]:
         """
@@ -90,15 +113,8 @@ class CalendarManager:
         
         requests = []
         try:
-            events_result = self.client.service.events().list(
-                calendarId=self.calendar_id,
-                timeMin=tmin,
-                timeMax=tmax,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            
-            for event in events_result.get('items', []):
+            items = self._fetch_events(tmin, tmax, order_by_start=True)
+            for event in items:
                 summary = event.get('summary', '')
                 if config.DELETE_KEYWORD.upper() not in summary.upper(): continue
                 if '[D]' in summary: continue # Already deleted
@@ -108,19 +124,11 @@ class CalendarManager:
                 
                 description = event.get('description', '')
                 
-                # Extract Ref
-                import re
-                ref_match = re.search(r'Ref:\s*([A-Z0-9]+)', description)
-                if not ref_match:
+                ref_num, owner_email = self._extract_ref_and_user(description)
+                if not ref_num:
                     logger.warning(f"DELETE request found but no Ref num: {summary}")
                     continue
-                ref_num = ref_match.group(1)
                 
-                # Extract Owner
-                owner_match = re.search(r'(?:Booked for )?User:\s*([^\s\n]+)', description)
-                owner_email = owner_match.group(1).strip() if owner_match else None
-                
-                from core.entities import DeletionRequest # Local import or move top
                 requests.append(DeletionRequest(
                     event_id=event['id'],
                     summary=summary,
@@ -172,13 +180,17 @@ class CalendarManager:
                 deleted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # Cleanse summary
                 s = new_summary
-                s = s.replace("[P]", "").replace("[S]", "").replace(config.DELETE_KEYWORD, "").strip()
+                s = s.replace("[P]", "").replace("[S]", "").strip()
+                
+                # Remove DELETE keyword (Case Insensitive)
+                s = re.sub(re.escape(config.DELETE_KEYWORD), "", s, flags=re.IGNORECASE).strip()
+                
                 # Remove leading non-alphanumeric if messy
-                import re
                 s = re.sub(r'^[^a-zA-Z0-9]+', '', s).strip()
                 
-                updates['summary'] = f"[D] {s}"
-                updates['description'] = f"{current_desc}\n\n[DELETED] The booking was successfully cancelled on server.\nTime: {deleted_at}"
+                # Update new_summary variable so it gets picked up below
+                new_summary = f"[DELETED] {s}"
+                updates['description'] = f"{current_desc}\n\nDeleted on: {deleted_at}"
 
             updates['summary'] = new_summary
             
@@ -235,3 +247,57 @@ class CalendarManager:
                 
         except Exception as e:
             logger.error(f"Failed to split event: {e}")
+
+    def find_successful_booking(self, end_time: datetime) -> Optional[Tuple[Dict[str, Any], str, str, str]]:
+        """
+        Finds a successful booking event that ends at the given time (approx).
+        Returns (event, ref_num, user_email, room_name) or None.
+        """
+        # We need to scan past events. 
+        # For efficiency, we might need a separate scan or cache. 
+        # But for now, let's just list events for the specific day around the time.
+        
+        tmin = (end_time - timedelta(hours=4)).isoformat()
+        tmax = (end_time + timedelta(hours=1)).isoformat()
+        
+        try:
+            items = self._fetch_events(tmin, tmax, order_by_start=False)
+            for event in items:
+                summary = event.get('summary', '')
+                # check for [P] or [S]
+                if not ("[P]" in summary or "[S]" in summary): continue
+                # check for SUCCESS color (11?) - or just rely on description/summary
+                
+                # Check End Time
+                # We need strict matching. 
+                end_str = event['end'].get('dateTime') or event['end'].get('date')
+                dt_end = datetime.fromisoformat(end_str)
+                
+                # Compare. Note timezone handling.
+                # end_time passed in should be timezone aware (UTC or local)
+                # Let's standardize to UTC for comparison
+                if dt_end.tzinfo:
+                     dt_end_utc = dt_end.astimezone(timezone.utc)
+                else: 
+                     # assume local? illegal.
+                     dt_end_utc = dt_end.replace(tzinfo=timezone.utc) # fallback
+                     
+                target_utc = end_time.astimezone(timezone.utc)
+                
+                if abs((dt_end_utc - target_utc).total_seconds()) < 60: # 1 min tolerance
+                     # Found candidate. Extract details.
+                     desc = event.get('description', '')
+                     
+                     ref_num, user = self._extract_ref_and_user(desc)
+                     if not ref_num or not user: continue
+                     
+                     # Extract Room (from location or summary)
+                     room = event.get('location', '')
+                     
+                     return (event, ref_num, user, room)
+                     
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding past booking: {e}")
+            return None

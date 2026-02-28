@@ -7,6 +7,7 @@ class BookingResult(Enum):
     TOO_EARLY = auto()
     CLOSED = auto()
     ERROR = auto()
+    TOO_LONG = auto()
 
 class CalendarStatus:
     PROCESSING = '5'   # Yellow
@@ -14,3 +15,16 @@ class CalendarStatus:
     SYNCED = '10'      # Green (same as SUCCESS)
     FAILURE = '11'     # Red
     DELETED = '8'      # Gray
+
+class ActionType(Enum):
+    BOOK = "BOOK"
+    SYNC = "SYNC"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    SCAN = "SCAN"
+
+class ActionStatus(Enum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    WARNING = "WARNING"
+    INFO = "INFO"
