@@ -239,6 +239,140 @@
             }
         }
 
+        /* Run Cards & History */
+        .run-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .run-header {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .agent-group {
+            padding: 8px 12px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+        }
+
+        .agent-group:last-child {
+            border-bottom: none;
+        }
+
+        .agent-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Tooltip */
+        .op-item-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .custom-tooltip {
+            visibility: hidden;
+            width: max-content;
+            max-width: 300px;
+            background-color: #020617;
+            /* Very dark slate */
+            color: #e2e8f0;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 100;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.8rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .custom-tooltip::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #020617 transparent transparent transparent;
+        }
+
+        .op-item-wrapper:hover .custom-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Filters */
+        .dashboard-filters {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            user-select: none;
+        }
+
+        .toggle-switch input {
+            appearance: none;
+            width: 34px;
+            height: 18px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            position: relative;
+            outline: none;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            background: #fff;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked {
+            background: var(--error-color);
+        }
+
+        .toggle-switch input:checked::before {
+            left: 18px;
+        }
+
         /* Agents Table */
         .agents-table {
             width: 100%;
@@ -279,6 +413,8 @@
             padding: 10px 0;
             display: flex;
             gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
         }
 
         .filter-chk {
@@ -300,20 +436,46 @@
             padding: 10px;
             font-size: 0.85rem;
             border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
         }
 
         .log-entry {
             padding: 2px 5px;
-            display: flex;
+            display: grid;
+            grid-template-columns: 80px 100px 50px 1fr;
+            /* Time, Source, Level, Msg */
+            align-items: flex-start;
             gap: 10px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .log-source {
-            width: 80px;
-            font-weight: bold;
-            flex-shrink: 0;
+        .log-time {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
         }
+
+        .log-source {
+            font-weight: bold;
+            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .log-level {
+            font-weight: bold;
+            text-align: center;
+            padding: 0 4px;
+            border-radius: 4px;
+        }
+
+        .log-msg {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
 
         /* Icons */
         .icon {
@@ -356,6 +518,11 @@
         button:active {
             transform: translateY(0);
         }
+
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 
@@ -395,32 +562,46 @@
 
         <!-- OVERVIEW TAB -->
         <div id="tab-overview" class="tab-view content-scroll active">
+            <div style="display:flex; justify-content:space-between; margin-bottom: 10px; align-items:center;">
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-sm" onclick="clearHistory('empty')"
+                        style="background: rgba(255,255,255,0.05); color: var(--text-secondary); border-color: rgba(255,255,255,0.1);">Clear
+                        Empty</button>
+                    <button class="btn-sm" onclick="clearHistory('all')"
+                        style="background: rgba(239, 68, 68, 0.1); color: var(--error-color); border-color: rgba(239, 68, 68, 0.2);">Clear
+                        All</button>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="errors-only-toggle" onchange="renderAllOps()">
+                    Show Errors Only
+                </label>
+            </div>
             <div class="ops-grid">
-                <!-- CREATE / BOOKING PANE -->
+                <!-- SCANNER PANE -->
                 <div class="op-pane">
                     <div class="op-header">
-                        <span class="op-title" style="color: var(--accent-color)">Booking Operations</span>
-                        <span class="op-status" id="status-CREATE">Idle</span>
+                        <span class="op-title" style="color: var(--accent-color)">Scanner</span>
+                        <span class="op-status" id="status-Scanner">Idle</span>
                     </div>
-                    <div class="op-list" id="list-CREATE"></div>
+                    <div class="op-list" id="list-Scanner"></div>
                 </div>
 
-                <!-- DELETE PANE -->
+                <!-- BOOKER PANE -->
                 <div class="op-pane">
                     <div class="op-header">
-                        <span class="op-title" style="color: var(--error-color)">Cleanup (Delete)</span>
-                        <span class="op-status" id="status-DELETE">Idle</span>
+                        <span class="op-title" style="color: var(--success-color)">Booker</span>
+                        <span class="op-status" id="status-Booker">Idle</span>
                     </div>
-                    <div class="op-list" id="list-DELETE"></div>
+                    <div class="op-list" id="list-Booker"></div>
                 </div>
 
-                <!-- SYNC PANE -->
+                <!-- SYNCER PANE -->
                 <div class="op-pane">
                     <div class="op-header">
-                        <span class="op-title" style="color: var(--warning-color)">Sync Status</span>
-                        <span class="op-status" id="status-SYNC">Idle</span>
+                        <span class="op-title" style="color: var(--warning-color)">Syncer</span>
+                        <span class="op-status" id="status-Syncer">Idle</span>
                     </div>
-                    <div class="op-list" id="list-SYNC"></div>
+                    <div class="op-list" id="list-Syncer"></div>
                 </div>
             </div>
         </div>
@@ -464,36 +645,46 @@
                         style="background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:var(--text-primary); padding:5px 10px; border-radius:4px; font-size:0.85rem; width:100%;"
                         onkeyup="renderLogs(currentState.logs || [])">
                 </div>
-                <div style="display:flex; gap:10px;">
+                <div style="display:flex; gap:10px; flex-wrap: wrap;">
                     <span
                         style="color:var(--text-secondary); font-size:0.8rem; text-transform:uppercase;">Source:</span>
-                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SCHEDULER')">
-                        Scheduler</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SCANNER')">
+                        Scanner</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('BOOKER')">
+                        Booker</label>
                     <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SYNCER')">
-                        Sync</label>
-                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('BOOKING')">
-                        Booking</label>
+                        Syncer</label>
                     <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SYSTEM')">
                         System</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('AGENT')">
+                        Agent</label>
                 </div>
             </div>
+            <!-- Log Tools -->
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <div class="filter-chk">
+                    <input type="checkbox" id="pause-scroll" onchange="togglePauseScroll()">
+                    <label for="pause-scroll">Pause Scroll</label>
+                </div>
+                <button class="btn-sm" onclick="copyLogs()">
+                    <svg class="icon" viewBox="0 0 24 24" style="width:14px; height:14px;">
+                        <path
+                            d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+                    </svg>
+                    Copy Visible Logs
+                </button>
+            </div>
+
             <div class="logs-container" id="logs-container"></div>
         </div>
 
         <div class="actions-bar">
-            <button onclick="triggerAction('sync')">
+            <button onclick="triggerAction('run_now')" style="width: 200px; justify-content: center;">
                 <svg class="icon" viewBox="0 0 24 24">
                     <path
                         d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
                 </svg>
-                Sync All Users
-            </button>
-            <button onclick="triggerAction('scan')">
-                <svg class="icon" viewBox="0 0 24 24">
-                    <path
-                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5.5-2.5l7.51-3.22-3.22-7.51-7.51 3.22 3.22 7.51z" />
-                </svg>
-                Scan Now
+                Run Cycle
             </button>
         </div>
     </div>
@@ -502,6 +693,8 @@
         const API_URL = '/api';
         let currentState = {};
         let ignoredLevels = new Set(['DEBUG']);
+        let ignoredSources = new Set([]);
+        let isPaused = false;
 
         function showTab(name) {
             document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
@@ -519,10 +712,37 @@
         }
 
         function toggleSourceFilter(source) {
-            // This function is kept for now, but its logic is removed from renderLogs
-            // as the source filtering is no longer active.
-            // If the UI elements for source filtering are removed, this function can be removed too.
-            // For now, it does nothing.
+            if (ignoredSources.has(source)) ignoredSources.delete(source);
+            else ignoredSources.add(source);
+            renderLogs(currentState.logs || []);
+        }
+
+        function togglePauseScroll() {
+            isPaused = document.getElementById('pause-scroll').checked;
+        }
+
+        function copyLogs() {
+            const container = document.getElementById('logs-container');
+            if (!container) return;
+            // Iterate over children to get plain text
+            let text = "";
+            for (let child of container.children) {
+                // Format: [TIME] [SOURCE] [LEVEL] MESSAGE
+                // We can extract textContent from specific spans
+                // child is .log-entry
+                // spans: time, source, level, msg
+                const time = child.querySelector('.log-time').innerText;
+                const source = child.querySelector('.log-source').innerText;
+                const level = child.querySelector('.log-level').innerText;
+                const msg = child.querySelector('.log-msg').innerText;
+                text += `[${time}] [${source}] [${level}] ${msg}\n`;
+            }
+
+            navigator.clipboard.writeText(text).then(() => {
+                alert("Logs copied to clipboard!");
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
         }
 
         async function fetchStatus() {
@@ -549,9 +769,7 @@
             renderAgents(data.agents);
 
             // Operations Lists
-            renderOp('CREATE', data.operations.CREATE);
-            renderOp('DELETE', data.operations.DELETE);
-            renderOp('SYNC', data.operations.SYNC);
+            renderAllOps();
 
             // Logs
             renderLogs(data.logs);
@@ -631,51 +849,125 @@
             }, 500);
         }
 
+        function renderAllOps() {
+            if (!currentState.operations) return;
+            renderOp('Scanner', currentState.operations.Scanner);
+            renderOp('Booker', currentState.operations.Booker);
+            renderOp('Syncer', currentState.operations.Syncer);
+        }
+
         function renderOp(type, opData) {
             if (!opData) return;
             const statusEl = document.getElementById(`status-${type}`);
             const listEl = document.getElementById(`list-${type}`);
 
-            statusEl.innerText = opData.status;
-            statusEl.className = `op-status ${opData.active ? 'Running' : ''}`;
+            const errorsOnly = document.getElementById('errors-only-toggle').checked;
 
-            // Re-render list
-            if (opData.items.length === 0) {
+            // Determine top-level status
+            let isRunning = opData.active_run != null;
+            let currentStatus = isRunning ? opData.active_run.status : "Idle";
+
+            statusEl.innerText = currentStatus;
+            statusEl.className = `op-status ${isRunning ? 'Running' : ''}`;
+
+            // Combine active_run and history
+            let runs = [];
+            if (opData.active_run) runs.push(opData.active_run);
+            if (opData.history) runs = runs.concat(opData.history);
+
+            if (runs.length === 0) {
                 listEl.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:0.9rem; font-style:italic; opacity:0.5;">No active tasks</div>`;
-            } else {
-                listEl.innerHTML = opData.items.map(item => {
-                    let icon = '';
-                    let color = '#fff';
-                    let extraClass = '';
-
-                    // Support Indentation for Child Items (Sync details)
-                    // We can check if text starts with hyphens or special char?
-                    // Or check if it's a "detail" item.
-                    // For now, let's assume if text starts with " - ", indent it.
-                    if (item.text.startsWith(" - ")) {
-                        extraClass = 'indent-item';
-                    }
-
-                    if (item.status === 'loading') {
-                        icon = `<svg class="icon spin" style="color:var(--accent-color)" viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 002 12h2a8 8 0 018-8z"/></svg>`;
-                    } else if (item.status === 'success') {
-                        icon = `<svg class="icon" style="color:var(--success-color)" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
-                        color = 'var(--text-secondary)';
-                    } else if (item.status === 'error') {
-                        icon = `<svg class="icon" style="color:var(--error-color)" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
-                        color = 'var(--error-color)';
-                    } else { // pending
-                        icon = `<svg class="icon" style="color:#666" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>`;
-                    }
-
-                    return `
-                        <div class="op-item ${extraClass}">
-                            <span style="color:${color}">${item.text}</span>
-                            <span class="item-status-icon">${icon}</span>
-                        </div>
-                    `;
-                }).join('');
+                return;
             }
+
+            let html = '';
+            runs.forEach((run, idx) => {
+                // Determine if we should collapse older runs (idx > 0 indicates history)
+                // Actually, let's keep it simple: always expand active, collapse history older than 5 mins?
+                // For now, let's just render them. We can add a simple <details> tag for native collapsing!
+
+                // Group items by agent
+                let groups = {};
+                let hasErrorsInRun = false;
+
+                run.items.forEach(item => {
+                    if (item.status === 'error' || item.status === 'warning') hasErrorsInRun = true;
+                    if (errorsOnly && item.status !== 'error' && item.status !== 'warning') return; // Skip non-errors if toggled
+
+                    let key = item.agent || 'System';
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(item);
+                });
+
+                // If errors only is ON, and this run has no errors, skip rendering the card entirely
+                if (errorsOnly && Object.keys(groups).length === 0) return;
+
+                let isLatest = idx === 0 && isRunning;
+                let runHeaderColor = isLatest ? 'var(--accent-color)' : 'var(--text-secondary)';
+
+                html += `
+                <div class="run-card">
+                    <div class="run-header">
+                        <span style="color: ${runHeaderColor}; font-weight: ${isLatest ? '600' : 'normal'}">${isLatest ? '▶ Current Run' : 'History'}</span>
+                        <span>${run.startTime || ''} - ${run.endTime || 'Running'}</span>
+                    </div>
+                `;
+
+                if (Object.keys(groups).length === 0) {
+                    html += `<div style="padding:10px; text-align:center; color:var(--text-secondary); font-size:0.8rem;">No actionable items</div>`;
+                } else {
+                    for (const [agent, items] of Object.entries(groups)) {
+                        let agentLabelHTML = ``;
+                        if (agent !== 'System') {
+                            agentLabelHTML = `
+                            <div class="agent-label">
+                                <svg class="icon" viewBox="0 0 24 24" style="width:14px; height:14px; color:var(--text-secondary)"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                ${agent}
+                            </div>`;
+                        }
+
+                        html += `<div class="agent-group">${agentLabelHTML}`;
+
+                        items.forEach(item => {
+                            let icon = '';
+                            let color = '#fff';
+
+                            if (item.status === 'loading') {
+                                icon = `<svg class="icon spin" style="color:var(--accent-color)" viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 002 12h2a8 8 0 018-8z"/></svg>`;
+                            } else if (item.status === 'success') {
+                                icon = `<svg class="icon" style="color:var(--success-color)" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+                                color = 'var(--text-secondary)';
+                            } else if (item.status === 'error') {
+                                icon = `<svg class="icon" style="color:var(--error-color)" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
+                                color = 'var(--error-color)';
+                            } else if (item.status === 'warning') {
+                                icon = `<svg class="icon" style="color:var(--warning-color)" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>`;
+                                color = 'var(--text-secondary)';
+                            } else {
+                                icon = `<svg class="icon" style="color:#666" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>`;
+                            }
+
+                            let tooltipHTML = item.details ? `<span class="custom-tooltip">${item.details}</span>` : '';
+                            let wrapperClass = item.details ? 'op-item-wrapper' : '';
+
+                            html += `
+                                <div class="${wrapperClass}">
+                                    <div class="op-item">
+                                        <span style="color:${color}">${item.text}</span>
+                                        <span class="item-status-icon">${icon}</span>
+                                    </div>
+                                    ${tooltipHTML}
+                                </div>
+                            `;
+                        });
+
+                        html += `</div>`; // Close agent-group
+                    }
+                }
+                html += `</div>`; // Close run-card
+            });
+
+            listEl.innerHTML = html;
         }
 
         function renderAgents(agents) {
@@ -697,9 +989,10 @@
 
             if (!logs) return;
 
-            // Filter by Level AND Search
+            // Filter by Level AND Search AND Source
             const filtered = logs.filter(l => {
                 if (ignoredLevels.has(l.level)) return false;
+                if (ignoredSources.has(l.source)) return false;
 
                 // Search
                 if (searchVal) {
@@ -709,6 +1002,20 @@
                 return true;
             });
 
+            // Reverse to show newest first? Or oldest first? 
+            // Logs come newest first from backend. We usually like newest at bottom for terminal feel,
+            // OR newest at top for dashboard feed. 
+            // The original code appended them. Let's keep newest at top or reverse?
+            // "insert(0, entry)" in python means index 0 is newest.
+            // HTML mapping 0->top. So newest is at top. 
+            // BUT, usually consoles scroll to bottom.
+            // Let's render them as they are (Newest at Top is easier for "Dashboard" usually, 
+            // but for "Log tail", newest at bottom is standard).
+            // Let's stick to Newest at Top for now based on previous behavior, OR flip it?
+            // Previous behavior: "insert(0)" in backend. Front end just mapped. 
+            // So Newest Top.
+            // Let's keep Newest at Top (Feed style).
+
             container.innerHTML = filtered.map(l => {
                 let color = 'var(--text-secondary)';
                 if (l.level === 'WARN') color = 'var(--warning-color)';
@@ -717,18 +1024,81 @@
                 if (l.level === 'DEBUG') color = '#64748b'; // dimmed blue-grey
 
                 return `<div class="log-entry" style="color:${color}">
-                    <span class="log-source">[${l.source}][${l.level}]</span>
-                    <span>${l.message}</span>
+                    <span class="log-time">${l.time}</span>
+                    <span class="log-source" title="${l.source}">${l.source}</span>
+                    <span class="log-level">${l.level}</span>
+                    <span class="log-msg">${l.message}</span>
                 </div>`
             }).join('');
 
-            if (wasAtBottom) { // Only scroll if we were at bottom
+            // Scroll behavior
+            // If we are showing Newest at Top, we usually stay at top?
+            // If Newest at Bottom, we scroll down.
+            // Let's assume Newest at Top (Feed). 
+            // So no auto-scroll needed unless we want to force top?
+            // Actually, for "Terminal feel", logs usually go bottom-up.
+            // But if the list is [Newest, Oldest], it renders Newest first (Top).
+            // So scrolling to bottom would show Oldest.
+            // If the user wants standard terminal, we should reverse the array.
+            // Let's reverse it to have Newest at Bottom!
+            // Wait, previous code: "logs.insert(0)" -> Newest at index 0.
+            // "container.scrollTop = container.scrollHeight" -> Scrolled to bottom.
+            // So it was showing Oldest at bottom? No, that would be weird.
+            // If Newest is at index 0, and we map 0->Top Div.
+            // Then Top Div is Newest. 
+            // Scroll to Bottom -> Oldest.
+            // This is "Twitter/Feed" style reversed?
+            // Usually logs: Oldest -> Newest (Bottom).
+            // So we should reverse the array before rendering if we want standard log view.
+
+            // Let's Reverse for standard log view (Newest at Bottom).
+            // But wait, the previous code had "logs.insert(0, entry)" which puts newest at start.
+            // And then RenderLogs mapped them. So Newest was at TOP.
+            // AND "wasAtBottom" logic suggests it wanted to auto-scroll to bottom.
+            // If Newest is at TOP, auto-scroll to bottom takes you to OLDEST.
+            // This suggests the previous logic was slightly conflicted or weird.
+
+            // IMPROVEMENT: Newest at Top is fine for dashboards. 
+            // I will remove the auto-scroll-to-bottom if Newest is at Top. 
+            // OR I will reverse the list to have Newest at Bottom.
+            // Let's Reverse it to have Newest at Bottom (Standard Terminal).
+
+            // filtered is [Newest, ..., Oldest]
+            // reversed is [Oldest, ..., Newest]
+            const toRender = [...filtered].reverse();
+
+            container.innerHTML = toRender.map(l => {
+                let color = 'var(--text-secondary)';
+                if (l.level === 'WARN') color = 'var(--warning-color)';
+                if (l.level === 'ERROR') color = 'var(--error-color)';
+                if (l.level === 'INFO') color = 'var(--success-color)';
+                if (l.level === 'DEBUG') color = '#64748b';
+
+                return `<div class="log-entry" style="color:${color}">
+                    <span class="log-time">${l.time}</span>
+                    <span class="log-source" title="${l.source}">${l.source}</span>
+                    <span class="log-level">${l.level}</span>
+                    <span class="log-msg">${l.message}</span>
+                </div>`
+            }).join('');
+
+            if (!isPaused && wasAtBottom) {
                 container.scrollTop = container.scrollHeight;
             }
         }
 
         async function triggerAction(name) {
             await fetch(`${API_URL}/action/${name}`, { method: 'POST' });
+        }
+
+        async function clearHistory(mode) {
+            if (mode === 'all' && !confirm("Are you sure you want to clear ALL history?")) return;
+            try {
+                await fetch(`${API_URL}/history/clear/${mode}`, { method: 'POST' });
+                await fetchStatus(); // Refresh immediately
+            } catch (e) {
+                console.error("Failed to clear history", e);
+            }
         }
 
         // Init

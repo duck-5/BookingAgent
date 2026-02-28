@@ -24,3 +24,10 @@ async def trigger_action(name: str):
     if state.trigger_action(name):
         return {"status": "ok", "message": f"Action '{name}' triggered"}
     raise HTTPException(status_code=404, detail="Action not found")
+
+@app.post("/api/history/clear/{mode}")
+async def clear_history(mode: str):
+    if mode in ["all", "empty"]:
+        state.clear_history(mode)
+        return {"status": "ok", "message": f"History cleared: {mode}"}
+    raise HTTPException(status_code=400, detail="Invalid mode. Must be 'all' or 'empty'.")

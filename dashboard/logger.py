@@ -12,11 +12,12 @@ class DashboardHandler(logging.Handler):
             level = record.levelname
             if level == "WARNING": level = "WARN"
             
-            # Simple source extraction (e.g., [SCHEDULER])
+            # Simple source extraction
             source = "SYSTEM"
-            if "[SCHEDULER]" in msg: source = "SCHEDULER"
+            if "[SCANNER]" in msg: source = "SCANNER"
+            elif "[BOOKER]" in msg: source = "BOOKER"
             elif "[SYNCER]" in msg: source = "SYNCER"
-            elif "[BOOKING]" in msg: source = "BOOKING"
+            elif "[SYSTEM]" in msg: source = "SYSTEM"
             elif "[AGENT]" in msg: source = "AGENT"
             
             # Clean message (remove prefix if desired, but keep for now)

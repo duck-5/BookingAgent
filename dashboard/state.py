@@ -31,15 +31,19 @@ class MonitorState:
         # --- Enhanced Data ---
         self.agents: List[Dict] = [] # [{email, status: 'Ready'|'Failed', last_active}]
         
-        # Operations: DELETE, SYNC, CREATE
-        # active: bool, status: str, items: [{id, text, status: 'pending'|'success'|'error', details}]
+        # Operations: Scanner, Booker, Syncer
+        # Each operation now has an 'active_run' and a 'history' of past runs
         self.operations = {
-            "DELETE": {"active": False, "status": "Idle", "items": []},
-            "SYNC":   {"active": False, "status": "Idle", "items": []},
-            "CREATE": {"active": False, "status": "Idle", "items": []}
+            "Scanner": {"active_run": None, "history": []},
+            "Booker":  {"active_run": None, "history": []},
+            "Syncer":  {"active_run": None, "history": []}
         }
         
-        self.timers = {} # key -> {target, label}
+        self.timers = {
+            "scan": {"target": None, "label": "Next Scan"},
+            "sync": {"target": None, "label": "Next Sync"},
+            "booking": {"target": None, "label": "Next Booking"}
+        }
 
     def update_status(self, key: str, value: Any):
         with self._lock:
@@ -62,55 +66,76 @@ class MonitorState:
                  self.timers[key] = {"target": None, "label": label}
 
     def op_start(self, op_type: str, status_msg: str = "Running..."):
-        """Start an operation section."""
+        """Start a new operation run. Moves the previous active_run to history."""
         with self._lock:
             if op_type in self.operations:
-                self.operations[op_type]["active"] = True
-                self.operations[op_type]["status"] = status_msg
-                self.operations[op_type]["items"] = [] # Clear previous items on new run? Yes.
+                op = self.operations[op_type]
+                # Archive previous run if exists
+                if op["active_run"]:
+                    # Keep at most 20 history items
+                    op["history"].insert(0, op["active_run"])
+                    if len(op["history"]) > 20:
+                        op["history"].pop()
+                
+                # Start new run
+                run_id = f"run-{int(time.time() * 1000)}"
+                op["active_run"] = {
+                    "id": run_id,
+                    "status": status_msg,
+                    "startTime": datetime.now().strftime("%H:%M:%S"),
+                    "items": []
+                }
 
     def op_update(self, op_type: str, key: str, value: Any):
-        """Update a specific key in an operation state (e.g. status)."""
+        """Update a specific key in the active operation run (e.g. status)."""
         with self._lock:
-            if op_type in self.operations:
-                self.operations[op_type][key] = value
+            if op_type in self.operations and self.operations[op_type]["active_run"]:
+                self.operations[op_type]["active_run"][key] = value
 
     def op_end(self, op_type: str, status_msg: str = "Idle"):
-        """End an operation section."""
+        """End the active operation section."""
         with self._lock:
-            if op_type in self.operations:
-                self.operations[op_type]["active"] = False
-                self.operations[op_type]["status"] = status_msg
+            if op_type in self.operations and self.operations[op_type]["active_run"]:
+                self.operations[op_type]["active_run"]["status"] = status_msg
+                self.operations[op_type]["active_run"]["endTime"] = datetime.now().strftime("%H:%M:%S")
+
+    def clear_history(self, mode: str):
+        """Clears operation history. modes: 'all', 'empty'."""
+        with self._lock:
+            for op_type, op in self.operations.items():
+                if mode == "all":
+                    op["history"] = []
+                elif mode == "empty":
+                    op["history"] = [run for run in op["history"] if len(run.get("items", [])) > 0]
 
     _id_counter = 0
 
-    def op_add_item(self, op_type: str, text: str, status: str = "pending") -> str:
-        """Add a trackable item to an operation. Returns item ID."""
+    def op_add_item(self, op_type: str, text: str, status: str = "pending", agent: str = None, details: str = None) -> str:
+        """Add a trackable item to the active operation run. Returns item ID."""
         with self._lock:
             self._id_counter += 1
             item_id = f"{int(time.time() * 1000)}-{self._id_counter}"
-            if op_type in self.operations:
-                self.operations[op_type]["items"].append({
+            if op_type in self.operations and self.operations[op_type]["active_run"]:
+                self.operations[op_type]["active_run"]["items"].append({
                     "id": item_id,
                     "text": text,
                     "status": status, # pending, success, error, loading
+                    "agent": agent,   # Grouping key
+                    "details": details, # Tooltip details
                     "timestamp": datetime.now().strftime("%H:%M:%S")
                 })
         return item_id
 
-    def op_update_item(self, op_type: str, item_id: str, new_status: str, extra_text: str = None):
-        """Update status of a trackable item."""
+    def op_update_item(self, op_type: str, item_id: str, new_status: str, extra_text: str = None, details: str = None, agent: str = None):
+        """Update status, text, agent, or details of a trackable item in the active run."""
         with self._lock:
-            if op_type in self.operations:
-                for item in self.operations[op_type]["items"]:
+            if op_type in self.operations and self.operations[op_type]["active_run"]:
+                for item in self.operations[op_type]["active_run"]["items"]:
                     if item["id"] == item_id:
-                        item["status"] = new_status
-                        if extra_text:
-                             # Check if we should append or replace? 
-                             # For error/success with details, let's replace nicely or append.
-                             # If extra_text starts with '❌' or 'SUCCESS', maybe simpler to replace?
-                             # Let's just append for now to be safe.
-                            item["text"] = extra_text 
+                        if new_status: item["status"] = new_status
+                        if extra_text: item["text"] = extra_text 
+                        if details: item["details"] = details
+                        if agent: item["agent"] = agent
                         break
 
     def log(self, level: str, source: str, message: str):
