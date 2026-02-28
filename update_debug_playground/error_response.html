@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+        <title>Error</title>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex"/>
+            <meta http-equiv="REFRESH"
+              content="1800; URL=../logout.php?redirect=%2Fscilib%2FWeb%2Fapi%2Freservation.php%3Faction%3Dupdate"/>
+        <link rel="shortcut icon" href="../favicon.png"/>
+    <link rel="icon" href="../favicon.png"/>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@200;300;400;600;700&display=swap"
+          rel="stylesheet">
+
+                        <script nonce="3eda313411" src="https://code.jquery.com/jquery-3.7.1.min.js"
+                    integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+                        <script nonce="3eda313411"
+                src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+                integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+                crossorigin="anonymous"></script>
+    
+    <script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/js/popper-2.11.6.min.js?v=3.8.3"></script>
+    <script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/js/tippy-6.3.7.min.js?v=3.8.3"></script>
+    <link rel='stylesheet' type='text/css' href='../scripts/css/tippy/light-border.css?v=3.8.3'/>
+
+            <script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/runtime.js?v=3.8.3"></script>
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/30179.js?v=3.8.3"></script>
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/11080.js?v=3.8.3"></script>
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/92045.js?v=3.8.3"></script>
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/7839.js?v=3.8.3"></script>
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/components.js?v=3.8.3"></script> <link rel='stylesheet' type='text/css' href='../scripts/dist/30179.css?v=3.8.3'/>    
+    <!-- CSS -->
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"
+              integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+              crossorigin="anonymous">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+                    
+    <link rel='stylesheet' type='text/css' href='../css/booked.css?v=3.8.3'/>
+        
+
+        <!-- End CSS -->
+
+
+</head>
+<body  >
+
+    <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
+        <div class="container-fluid">
+            <button
+                    class="navbar-toggler"
+                    type="button"
+                    data-bs-toggle="offcanvas"
+                    data-bs-target="#booked-navigation"
+                    aria-controls="booked-navigation"
+                    aria-expanded="false"
+                    aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+                            <a class="navbar-brand" href="../schedule.php">
+                    <img src="../img/custom-logo.png?q=&v=3.8.3" title="Library Room Scheduler - ?" alt="Library Room Scheduler - ?"  class="logo"  />
+                </a>
+            
+            <div class="offcanvas offcanvas-start" id="booked-navigation" tabindex="-1"
+                 aria-labelledby="booked-navigation-label">
+                <div class="offcanvas-header">
+                    <h5 class="offcanvas-title" id="booked-navigation-label">Library Room Scheduler</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"
+                            aria-label="Close"></button>
+                </div>
+                <li class="offcanvas-body">
+                    <ul class="navbar-nav me-auto align-items-lg-center">
+                                                    <li class="nav-item" id="navDashboard">
+                                <a class="nav-link" href="../dashboard.php">
+                                    Dashboard
+                                </a>
+                            </li>
+                            <li class="nav-item dropdown" id="navScheduleDropdown">
+                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown">
+                                    Reservations
+                                </a>
+                                <ul class="dropdown-menu">
+                                    <li id="navBookings">
+                                        <a class="dropdown-item" href="../schedule.php">
+                                            Schedule
+                                        </a>
+                                    </li>
+                                    <li id="navFindATime">
+                                        <a class="dropdown-item" href="../search-availability.php">
+                                            Find A Time
+                                        </a>
+                                    </li>
+
+                                    
+                                    <li>
+                                        <hr class="dropdown-divider"/>
+                                    </li>
+
+                                    <li id="navMyCalendar">
+                                        <a class="dropdown-item" href="../my-calendar.php">
+                                            My Calendar
+                                        </a>
+                                    </li>
+                                    <li id="navResourceCalendar">
+                                        <a class="dropdown-item" href="../calendar.php">
+                                            Resource Calendar
+                                        </a>
+                                    </li>
+
+                                    <li>
+                                        <hr class="dropdown-divider"/>
+                                    </li>
+
+                                    <li id="navSearchReservations">
+                                        <a class="dropdown-item" href="../search-reservations.php">
+                                            Search Reservations
+                                        </a>
+                                    </li>
+                                    <li id="navPrintReservations">
+                                        <a class="dropdown-item" href="../print">
+                                            Print Reservations
+                                        </a>
+                                    </li>
+                                </ul>
+                            </li>
+                                                                                                                                </ul>
+                    <ul class="navbar-nav">
+                                                                        <li class="nav-item" id="navHelpDropdown">
+                            <a href="https://www.bookedscheduler.com/help" class="nav-link" target="_blank" title="Help"
+                               rel="noreferrer">
+                                <span class="bi bi-question-circle d-none d-lg-inline"></span>
+                                <span class="d-lg-none">Help</span>
+                            </a>
+                        </li>
+                                                    <li class="nav-item dropdown">
+                                                                    <div role="button" class="nav-reservation-badge d-none d-lg-inline-block"
+                                         id="nav-reservation-badge" data-count="0"
+                                         aria-controls="nav-reservation-header-list" aria-expanded="false">
+                                        <span class="bi bi-bell"></span>
+                                        <div id="nav-reservation-header-list"
+                                             class="nav-reservation-header-list no-show">
+                                        </div>
+                                    </div>
+                                                                <a href="#" class="nav-link dropdown-toggle d-sm-inline-block" data-bs-toggle="dropdown"
+                                   aria-expanded="false" role="button" title="My Account">
+                                    <span class="bi bi-person-circle"></span> Ben
+                                </a>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li id="navProfile">
+                                        <a class="dropdown-item" href="../profile.php">
+                                            Profile
+                                        </a>
+                                    </li>
+                                                                        <li id="navNotification">
+                                        <a class="dropdown-item" href="../notification-preferences.php">
+                                            Notification Preferences
+                                        </a>
+                                    </li>
+                                                                                                                                                                                                                        <li>
+                                        <hr class="dropdown-divider"/>
+                                    </li>
+                                    <li id="navSignOut">
+                                        <a class="dropdown-item" href="../logout.php">
+                                            Sign Out
+                                        </a>
+                                    </li>
+                                </ul>
+                            </li>
+                                            </ul>
+            </div>
+        </div>
+    </nav>
+
+<div id="main" class="container-fluid "  >
+<div class="error">
+    <h3>Unknown Error</h3>
+    <h5><a href="http://schedule.tau.ac.il/scilib/Web">Return to the last page that you were on</a></h5>
+</div>
+
+
+            <script nonce="3eda313411" src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+        <script  nonce="3eda313411"
+                src="https://cdnjs.cloudflare.com/ajax/libs/jquery.form/3.50/jquery.form.min.js"></script>
+        <script nonce="3eda313411"
+                src="https://cdnjs.cloudflare.com/ajax/libs/jquery.blockUI/2.66.0-2013.10.09/jquery.blockUI.min.js"></script>
+            
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/dist/booked.bundle.min.js?v=3.8.3"></script></div>
+
+<footer class="footer" >
+    <div>
+        &copy; 2024
+        <a href="https://www.twinkletoessoftware.com">Twinkle Toes Software</a>
+        &#8226;
+        <a href="https://www.bookedscheduler.com">Booked Scheduler v3.8.3</a>
+    </div>
+</footer>
+
+<script nonce="3eda313411" src="https://cdn.bookedscheduler.com/3.8.3/scripts/reservation-header-alerts.js?v=3.8.3"></script>
+
+<script nonce="3eda313411">
+    const reservationNavApiUrl = "http://schedule.tau.ac.il/scilib/Web/api/reservation-nav-list.php";
+    const reservationAlerts = new ReservationHeaderAlerts(reservationNavApiUrl);
+    reservationAlerts.init();
+
+    if (window.jQuery) {
+        $(document).ready(function () {
+            init();
+        });
+    }
+</script>
+</body>
+</html>

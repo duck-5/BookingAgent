@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking Monitor Pro</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --sidebar-bg: #1e293b;
+            --card-bg: rgba(30, 41, 59, 0.5);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent-color: #38bdf8;
+            --success-color: #4ade80;
+            --warning-color: #facc15;
+            --error-color: #f87171;
+            --border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 250px;
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            flex-shrink: 0;
+        }
+
+        .brand {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-item {
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        .system-status {
+            margin-top: auto;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background-image:
+                radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(74, 222, 128, 0.02) 0%, transparent 40%);
+        }
+
+        .top-bar {
+            height: 70px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 30px;
+            justify-content: space-between;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(10px);
+        }
+
+        .page-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .timer-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 20px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .timer-display {
+            font-family: 'Fira Code', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-color);
+            text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+            min-width: 120px;
+            text-align: center;
+        }
+
+        .timer-label {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .content-scroll {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+        }
+
+        /* Tab Views */
+        .tab-view {
+            display: none;
+            height: 100%;
+        }
+
+        .tab-view.active {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Grid */
+        .ops-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            height: 100%;
+            /* Fill available space */
+        }
+
+        .op-pane {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .op-header {
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(0, 0, 0, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .op-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .op-status {
+            font-size: 0.8rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .op-status.Running {
+            color: var(--warning-color);
+            background: rgba(250, 204, 21, 0.1);
+            animation: pulse 2s infinite;
+        }
+
+        .op-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 0.9rem;
+        }
+
+        .op-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            background: rgba(255, 255, 255, 0.02);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .item-status-icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Run Cards & History */
+        .run-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+
+        .run-header {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .agent-group {
+            padding: 8px 12px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.05);
+        }
+
+        .agent-group:last-child {
+            border-bottom: none;
+        }
+
+        .agent-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Tooltip */
+        .op-item-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .custom-tooltip {
+            visibility: hidden;
+            width: max-content;
+            max-width: 300px;
+            background-color: #020617;
+            /* Very dark slate */
+            color: #e2e8f0;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px 12px;
+            position: absolute;
+            z-index: 100;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.8rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .custom-tooltip::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #020617 transparent transparent transparent;
+        }
+
+        .op-item-wrapper:hover .custom-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Filters */
+        .dashboard-filters {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            user-select: none;
+        }
+
+        .toggle-switch input {
+            appearance: none;
+            width: 34px;
+            height: 18px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            position: relative;
+            outline: none;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input::before {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            background: #fff;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked {
+            background: var(--error-color);
+        }
+
+        .toggle-switch input:checked::before {
+            left: 18px;
+        }
+
+        /* Agents Table */
+        .agents-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .agents-table th,
+        .agents-table td {
+            padding: 12px 20px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .agents-table th {
+            background: rgba(255, 255, 255, 0.05);
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .status-pill {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }
+
+        .status-ready {
+            background: rgba(74, 222, 128, 0.1);
+            color: var(--success-color);
+        }
+
+        .status-failed {
+            background: rgba(248, 113, 113, 0.1);
+            color: var(--error-color);
+        }
+
+        /* Logs */
+        .log-controls {
+            padding: 10px 0;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-chk {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .logs-container {
+            flex: 1;
+            background: #000;
+            border-radius: 8px;
+            font-family: 'Fira Code', monospace;
+            overflow-y: auto;
+            padding: 10px;
+            font-size: 0.85rem;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .log-entry {
+            padding: 2px 5px;
+            display: grid;
+            grid-template-columns: 80px 100px 50px 1fr;
+            /* Time, Source, Level, Msg */
+            align-items: flex-start;
+            gap: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .log-source {
+            font-weight: bold;
+            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .log-level {
+            font-weight: bold;
+            text-align: center;
+            padding: 0 4px;
+            border-radius: 4px;
+        }
+
+        .log-msg {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+
+        /* Icons */
+        .icon {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
+        /* Actions Bar */
+        .actions-bar {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            backdrop-filter: blur(5px);
+            transition: all 0.2s ease;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        button:hover {
+            background: rgba(56, 189, 248, 0.1);
+            border-color: var(--accent-color);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="sidebar">
+        <div class="brand">
+            <svg class="icon" viewBox="0 0 24 24">
+                <path
+                    d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z" />
+            </svg>
+            BookingMonitor
+        </div>
+
+        <div class="nav-item active" onclick="showTab('overview')">Overview</div>
+        <div class="nav-item" onclick="showTab('agents')">Agents</div>
+        <div class="nav-item" onclick="showTab('logs')">System Logs</div>
+
+        <div class="system-status">
+            <div style="font-size: 0.8rem; color: var(--text-secondary);">Scheduler Status</div>
+            <div id="scheduler-status" style="color: var(--success-color); font-weight: 600;">Connecting...</div>
+            <div style="margin-top: 10px; font-size: 0.7rem; color: var(--text-secondary);">
+                Last Scan: <span id="last-scan">--</span><br>
+                Last Sync: <span id="last-sync">--</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="top-bar">
+            <div class="page-title" id="page-title">Overview</div>
+            <!-- Multi-Timer Container -->
+            <div id="timers-wrapper" style="display:flex; gap:15px;">
+                <!-- Timers injected here -->
+            </div>
+        </div>
+
+        <!-- OVERVIEW TAB -->
+        <div id="tab-overview" class="tab-view content-scroll active">
+            <div style="display:flex; justify-content:space-between; margin-bottom: 10px; align-items:center;">
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-sm" onclick="clearHistory('empty')"
+                        style="background: rgba(255,255,255,0.05); color: var(--text-secondary); border-color: rgba(255,255,255,0.1);">Clear
+                        Empty</button>
+                    <button class="btn-sm" onclick="clearHistory('all')"
+                        style="background: rgba(239, 68, 68, 0.1); color: var(--error-color); border-color: rgba(239, 68, 68, 0.2);">Clear
+                        All</button>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="errors-only-toggle" onchange="renderAllOps()">
+                    Show Errors Only
+                </label>
+            </div>
+            <div class="ops-grid">
+                <!-- SCANNER PANE -->
+                <div class="op-pane">
+                    <div class="op-header">
+                        <span class="op-title" style="color: var(--accent-color)">Scanner</span>
+                        <span class="op-status" id="status-Scanner">Idle</span>
+                    </div>
+                    <div class="op-list" id="list-Scanner"></div>
+                </div>
+
+                <!-- BOOKER PANE -->
+                <div class="op-pane">
+                    <div class="op-header">
+                        <span class="op-title" style="color: var(--success-color)">Booker</span>
+                        <span class="op-status" id="status-Booker">Idle</span>
+                    </div>
+                    <div class="op-list" id="list-Booker"></div>
+                </div>
+
+                <!-- SYNCER PANE -->
+                <div class="op-pane">
+                    <div class="op-header">
+                        <span class="op-title" style="color: var(--warning-color)">Syncer</span>
+                        <span class="op-status" id="status-Syncer">Idle</span>
+                    </div>
+                    <div class="op-list" id="list-Syncer"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AGENTS TAB -->
+        <div id="tab-agents" class="tab-view content-scroll">
+            <div class="card"
+                style="background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border-color);">
+                <table class="agents-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody id="agents-tbody">
+                        <!-- Agents list -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- LOGS TAB -->
+        <div id="tab-logs" class="tab-view content-scroll">
+            <div class="log-controls">
+                <div
+                    style="display:flex; gap:10px; border-right:1px solid rgba(255,255,255,0.1); padding-right:15px; margin-right:15px;">
+                    <span style="color:var(--text-secondary); font-size:0.8rem; text-transform:uppercase;">Level:</span>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleLogFilter('INFO')">
+                        INFO</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleLogFilter('WARN')">
+                        WARN</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleLogFilter('ERROR')">
+                        ERROR</label>
+                    <label class="filter-chk"><input type="checkbox" onchange="toggleLogFilter('DEBUG')"> DEBUG</label>
+                </div>
+                <!-- Search Box -->
+                <div style="flex:1; display:flex; align-items:center;">
+                    <input type="text" id="log-search" placeholder="Search logs..."
+                        style="background:rgba(0,0,0,0.2); border:1px solid var(--border-color); color:var(--text-primary); padding:5px 10px; border-radius:4px; font-size:0.85rem; width:100%;"
+                        onkeyup="renderLogs(currentState.logs || [])">
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                    <span
+                        style="color:var(--text-secondary); font-size:0.8rem; text-transform:uppercase;">Source:</span>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SCANNER')">
+                        Scanner</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('BOOKER')">
+                        Booker</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SYNCER')">
+                        Syncer</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('SYSTEM')">
+                        System</label>
+                    <label class="filter-chk"><input type="checkbox" checked onchange="toggleSourceFilter('AGENT')">
+                        Agent</label>
+                </div>
+            </div>
+            <!-- Log Tools -->
+            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                <div class="filter-chk">
+                    <input type="checkbox" id="pause-scroll" onchange="togglePauseScroll()">
+                    <label for="pause-scroll">Pause Scroll</label>
+                </div>
+                <button class="btn-sm" onclick="copyLogs()">
+                    <svg class="icon" viewBox="0 0 24 24" style="width:14px; height:14px;">
+                        <path
+                            d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
+                    </svg>
+                    Copy Visible Logs
+                </button>
+            </div>
+
+            <div class="logs-container" id="logs-container"></div>
+        </div>
+
+        <div class="actions-bar">
+            <button onclick="triggerAction('run_now')" style="width: 200px; justify-content: center;">
+                <svg class="icon" viewBox="0 0 24 24">
+                    <path
+                        d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
+                </svg>
+                Run Cycle
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/api';
+        let currentState = {};
+        let ignoredLevels = new Set(['DEBUG']);
+        let ignoredSources = new Set([]);
+        let isPaused = false;
+
+        function showTab(name) {
+            document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+            document.getElementById('tab-' + name).classList.add('active');
+            event.target.classList.add('active');
+            document.getElementById('page-title').innerText = name.charAt(0).toUpperCase() + name.slice(1);
+        }
+
+        function toggleLogFilter(level) {
+            if (ignoredLevels.has(level)) ignoredLevels.delete(level);
+            else ignoredLevels.add(level);
+            renderLogs(currentState.logs || []);
+        }
+
+        function toggleSourceFilter(source) {
+            if (ignoredSources.has(source)) ignoredSources.delete(source);
+            else ignoredSources.add(source);
+            renderLogs(currentState.logs || []);
+        }
+
+        function togglePauseScroll() {
+            isPaused = document.getElementById('pause-scroll').checked;
+        }
+
+        function copyLogs() {
+            const container = document.getElementById('logs-container');
+            if (!container) return;
+            // Iterate over children to get plain text
+            let text = "";
+            for (let child of container.children) {
+                // Format: [TIME] [SOURCE] [LEVEL] MESSAGE
+                // We can extract textContent from specific spans
+                // child is .log-entry
+                // spans: time, source, level, msg
+                const time = child.querySelector('.log-time').innerText;
+                const source = child.querySelector('.log-source').innerText;
+                const level = child.querySelector('.log-level').innerText;
+                const msg = child.querySelector('.log-msg').innerText;
+                text += `[${time}] [${source}] [${level}] ${msg}\n`;
+            }
+
+            navigator.clipboard.writeText(text).then(() => {
+                alert("Logs copied to clipboard!");
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch(`${API_URL}/status`);
+                const data = await res.json();
+                currentState = data;
+                updateUI(data);
+            } catch (e) {
+                document.getElementById('scheduler-status').innerText = "Offline";
+            }
+        }
+
+        function updateUI(data) {
+            // Sidebar Status
+            document.getElementById('scheduler-status').innerText = data.status.scheduler;
+            document.getElementById('last-scan').innerText = data.status.last_scan || '--';
+            document.getElementById('last-sync').innerText = data.status.last_sync || '--';
+
+            // Timers
+            renderTimers(data.timers);
+
+            // Agents
+            renderAgents(data.agents);
+
+            // Operations Lists
+            renderAllOps();
+
+            // Logs
+            renderLogs(data.logs);
+        }
+
+        function renderTimers(timersData) {
+            const wrapper = document.getElementById('timers-wrapper');
+            // Ensure wrapper exists
+            if (!wrapper) return;
+
+            const order = ["scan", "sync", "booking"];
+
+            if (!timersData) return;
+
+            order.forEach(key => {
+                let el = document.getElementById(`timer-block-${key}`);
+                if (!el) {
+                    el = document.createElement('div');
+                    el.id = `timer-block-${key}`;
+                    el.className = 'timer-container';
+                    el.innerHTML = `
+                        <span class="timer-label" id="timer-lbl-${key}"></span>
+                        <div class="timer-display" id="timer-val-${key}">--:--:--</div>
+                    `;
+                    wrapper.appendChild(el);
+                }
+
+                const tData = timersData[key];
+                if (!tData) {
+                    el.style.display = 'none';
+                    return;
+                }
+                el.style.display = 'flex';
+                document.getElementById(`timer-lbl-${key}`).innerText = tData.label || key;
+
+                // Set target directly
+                el.dataset.target = tData.target || "";
+            });
+        }
+
+        // Global Timer Tick
+        if (!window.globalTimerParams) {
+            window.globalTimerParams = true;
+            setInterval(() => {
+                document.querySelectorAll('.timer-container').forEach(el => {
+                    const key = el.id.replace('timer-block-', '');
+                    const targetStr = el.dataset.target;
+                    const display = document.getElementById(`timer-val-${key}`);
+
+                    if (!targetStr || targetStr === "null" || targetStr === "") {
+                        display.innerText = "--:--:--";
+                        display.style.color = "var(--text-secondary)";
+                        return;
+                    }
+
+                    // Handle UTC 'Z' or simple parsing
+                    const target = new Date(targetStr).getTime();
+                    // We must use UTC comparison essentially or local?
+                    // The server sends isoformat. JS Date(iso) handles it in local time usually.
+                    // If server sends UTC (Z-suffixed), JS converts to local.
+                    // If we want countdown, we compare to Date.now().
+
+                    const now = new Date().getTime();
+                    const distance = target - now;
+
+                    if (distance < 0) {
+                        display.innerText = "Processing...";
+                        display.style.color = "var(--warning-color)";
+                    } else {
+                        display.style.color = "var(--accent-color)";
+                        const h = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        const m = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                        const s = Math.floor((distance % (1000 * 60)) / 1000);
+                        display.innerText = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                    }
+                });
+            }, 500);
+        }
+
+        function renderAllOps() {
+            if (!currentState.operations) return;
+            renderOp('Scanner', currentState.operations.Scanner);
+            renderOp('Booker', currentState.operations.Booker);
+            renderOp('Syncer', currentState.operations.Syncer);
+        }
+
+        function renderOp(type, opData) {
+            if (!opData) return;
+            const statusEl = document.getElementById(`status-${type}`);
+            const listEl = document.getElementById(`list-${type}`);
+
+            const errorsOnly = document.getElementById('errors-only-toggle').checked;
+
+            // Determine top-level status
+            let isRunning = opData.active_run != null;
+            let currentStatus = isRunning ? opData.active_run.status : "Idle";
+
+            statusEl.innerText = currentStatus;
+            statusEl.className = `op-status ${isRunning ? 'Running' : ''}`;
+
+            // Combine active_run and history
+            let runs = [];
+            if (opData.active_run) runs.push(opData.active_run);
+            if (opData.history) runs = runs.concat(opData.history);
+
+            if (runs.length === 0) {
+                listEl.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:0.9rem; font-style:italic; opacity:0.5;">No active tasks</div>`;
+                return;
+            }
+
+            let html = '';
+            runs.forEach((run, idx) => {
+                // Determine if we should collapse older runs (idx > 0 indicates history)
+                // Actually, let's keep it simple: always expand active, collapse history older than 5 mins?
+                // For now, let's just render them. We can add a simple <details> tag for native collapsing!
+
+                // Group items by agent
+                let groups = {};
+                let hasErrorsInRun = false;
+
+                run.items.forEach(item => {
+                    if (item.status === 'error' || item.status === 'warning') hasErrorsInRun = true;
+                    if (errorsOnly && item.status !== 'error' && item.status !== 'warning') return; // Skip non-errors if toggled
+
+                    let key = item.agent || 'System';
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(item);
+                });
+
+                // If errors only is ON, and this run has no errors, skip rendering the card entirely
+                if (errorsOnly && Object.keys(groups).length === 0) return;
+
+                let isLatest = idx === 0 && isRunning;
+                let runHeaderColor = isLatest ? 'var(--accent-color)' : 'var(--text-secondary)';
+
+                html += `
+                <div class="run-card">
+                    <div class="run-header">
+                        <span style="color: ${runHeaderColor}; font-weight: ${isLatest ? '600' : 'normal'}">${isLatest ? '▶ Current Run' : 'History'}</span>
+                        <span>${run.startTime || ''} - ${run.endTime || 'Running'}</span>
+                    </div>
+                `;
+
+                if (Object.keys(groups).length === 0) {
+                    html += `<div style="padding:10px; text-align:center; color:var(--text-secondary); font-size:0.8rem;">No actionable items</div>`;
+                } else {
+                    for (const [agent, items] of Object.entries(groups)) {
+                        let agentLabelHTML = ``;
+                        if (agent !== 'System') {
+                            agentLabelHTML = `
+                            <div class="agent-label">
+                                <svg class="icon" viewBox="0 0 24 24" style="width:14px; height:14px; color:var(--text-secondary)"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                                ${agent}
+                            </div>`;
+                        }
+
+                        html += `<div class="agent-group">${agentLabelHTML}`;
+
+                        items.forEach(item => {
+                            let icon = '';
+                            let color = '#fff';
+
+                            if (item.status === 'loading') {
+                                icon = `<svg class="icon spin" style="color:var(--accent-color)" viewBox="0 0 24 24"><path d="M12 4V2A10 10 0 002 12h2a8 8 0 018-8z"/></svg>`;
+                            } else if (item.status === 'success') {
+                                icon = `<svg class="icon" style="color:var(--success-color)" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+                                color = 'var(--text-secondary)';
+                            } else if (item.status === 'error') {
+                                icon = `<svg class="icon" style="color:var(--error-color)" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
+                                color = 'var(--error-color)';
+                            } else if (item.status === 'warning') {
+                                icon = `<svg class="icon" style="color:var(--warning-color)" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>`;
+                                color = 'var(--text-secondary)';
+                            } else {
+                                icon = `<svg class="icon" style="color:#666" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>`;
+                            }
+
+                            let tooltipHTML = item.details ? `<span class="custom-tooltip">${item.details}</span>` : '';
+                            let wrapperClass = item.details ? 'op-item-wrapper' : '';
+
+                            html += `
+                                <div class="${wrapperClass}">
+                                    <div class="op-item">
+                                        <span style="color:${color}">${item.text}</span>
+                                        <span class="item-status-icon">${icon}</span>
+                                    </div>
+                                    ${tooltipHTML}
+                                </div>
+                            `;
+                        });
+
+                        html += `</div>`; // Close agent-group
+                    }
+                }
+                html += `</div>`; // Close run-card
+            });
+
+            listEl.innerHTML = html;
+        }
+
+        function renderAgents(agents) {
+            if (!agents) return;
+            const tbody = document.getElementById('agents-tbody');
+            tbody.innerHTML = agents.map(a => `
+            <tr>
+                <td>${a.email}</td>
+                <td><span class="status-pill ${a.status === 'Ready' ? 'status-ready' : 'status-failed'}">${a.status}</span></td>
+                <td>${a.last_active}</td>
+            </tr>
+        `).join('');
+        }
+
+        function renderLogs(logs) {
+            const container = document.getElementById('logs-container');
+            const searchVal = document.getElementById('log-search').value.toLowerCase();
+            const wasAtBottom = container.scrollHeight - container.scrollTop === container.clientHeight;
+
+            if (!logs) return;
+
+            // Filter by Level AND Search AND Source
+            const filtered = logs.filter(l => {
+                if (ignoredLevels.has(l.level)) return false;
+                if (ignoredSources.has(l.source)) return false;
+
+                // Search
+                if (searchVal) {
+                    const txt = (l.message + l.source + l.level).toLowerCase();
+                    if (!txt.includes(searchVal)) return false;
+                }
+                return true;
+            });
+
+            // Reverse to show newest first? Or oldest first? 
+            // Logs come newest first from backend. We usually like newest at bottom for terminal feel,
+            // OR newest at top for dashboard feed. 
+            // The original code appended them. Let's keep newest at top or reverse?
+            // "insert(0, entry)" in python means index 0 is newest.
+            // HTML mapping 0->top. So newest is at top. 
+            // BUT, usually consoles scroll to bottom.
+            // Let's render them as they are (Newest at Top is easier for "Dashboard" usually, 
+            // but for "Log tail", newest at bottom is standard).
+            // Let's stick to Newest at Top for now based on previous behavior, OR flip it?
+            // Previous behavior: "insert(0)" in backend. Front end just mapped. 
+            // So Newest Top.
+            // Let's keep Newest at Top (Feed style).
+
+            container.innerHTML = filtered.map(l => {
+                let color = 'var(--text-secondary)';
+                if (l.level === 'WARN') color = 'var(--warning-color)';
+                if (l.level === 'ERROR') color = 'var(--error-color)';
+                if (l.level === 'INFO') color = 'var(--success-color)';
+                if (l.level === 'DEBUG') color = '#64748b'; // dimmed blue-grey
+
+                return `<div class="log-entry" style="color:${color}">
+                    <span class="log-time">${l.time}</span>
+                    <span class="log-source" title="${l.source}">${l.source}</span>
+                    <span class="log-level">${l.level}</span>
+                    <span class="log-msg">${l.message}</span>
+                </div>`
+            }).join('');
+
+            // Scroll behavior
+            // If we are showing Newest at Top, we usually stay at top?
+            // If Newest at Bottom, we scroll down.
+            // Let's assume Newest at Top (Feed). 
+            // So no auto-scroll needed unless we want to force top?
+            // Actually, for "Terminal feel", logs usually go bottom-up.
+            // But if the list is [Newest, Oldest], it renders Newest first (Top).
+            // So scrolling to bottom would show Oldest.
+            // If the user wants standard terminal, we should reverse the array.
+            // Let's reverse it to have Newest at Bottom!
+            // Wait, previous code: "logs.insert(0)" -> Newest at index 0.
+            // "container.scrollTop = container.scrollHeight" -> Scrolled to bottom.
+            // So it was showing Oldest at bottom? No, that would be weird.
+            // If Newest is at index 0, and we map 0->Top Div.
+            // Then Top Div is Newest. 
+            // Scroll to Bottom -> Oldest.
+            // This is "Twitter/Feed" style reversed?
+            // Usually logs: Oldest -> Newest (Bottom).
+            // So we should reverse the array before rendering if we want standard log view.
+
+            // Let's Reverse for standard log view (Newest at Bottom).
+            // But wait, the previous code had "logs.insert(0, entry)" which puts newest at start.
+            // And then RenderLogs mapped them. So Newest was at TOP.
+            // AND "wasAtBottom" logic suggests it wanted to auto-scroll to bottom.
+            // If Newest is at TOP, auto-scroll to bottom takes you to OLDEST.
+            // This suggests the previous logic was slightly conflicted or weird.
+
+            // IMPROVEMENT: Newest at Top is fine for dashboards. 
+            // I will remove the auto-scroll-to-bottom if Newest is at Top. 
+            // OR I will reverse the list to have Newest at Bottom.
+            // Let's Reverse it to have Newest at Bottom (Standard Terminal).
+
+            // filtered is [Newest, ..., Oldest]
+            // reversed is [Oldest, ..., Newest]
+            const toRender = [...filtered].reverse();
+
+            container.innerHTML = toRender.map(l => {
+                let color = 'var(--text-secondary)';
+                if (l.level === 'WARN') color = 'var(--warning-color)';
+                if (l.level === 'ERROR') color = 'var(--error-color)';
+                if (l.level === 'INFO') color = 'var(--success-color)';
+                if (l.level === 'DEBUG') color = '#64748b';
+
+                return `<div class="log-entry" style="color:${color}">
+                    <span class="log-time">${l.time}</span>
+                    <span class="log-source" title="${l.source}">${l.source}</span>
+                    <span class="log-level">${l.level}</span>
+                    <span class="log-msg">${l.message}</span>
+                </div>`
+            }).join('');
+
+            if (!isPaused && wasAtBottom) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        async function triggerAction(name) {
+            await fetch(`${API_URL}/action/${name}`, { method: 'POST' });
+        }
+
+        async function clearHistory(mode) {
+            if (mode === 'all' && !confirm("Are you sure you want to clear ALL history?")) return;
+            try {
+                await fetch(`${API_URL}/history/clear/${mode}`, { method: 'POST' });
+                await fetchStatus(); // Refresh immediately
+            } catch (e) {
+                console.error("Failed to clear history", e);
+            }
+        }
+
+        // Init
+        // Use a single loop for status, no need for separate timer loop as we use global ticker
+        setInterval(fetchStatus, 1000);
+        fetchStatus();
+
+        // Set first tab active
+        document.querySelector('.nav-item').classList.add('active');
+    </script>
+</body>
+
+</html>
