@@ -1,103 +1,56 @@
-# Google Calendar Integration Knowledge
+# Google Calendar Integration
 
-## Overview
-This document summarizes the findings and logic for integrating the Booking Agent with Google Calendar. The goal is to allow users to create events in a specific calendar ("Library Bookings") which are then automatically processed by the system to make actual room bookings.
+The booking system acts as a bidirectional synchronization layer between the University API and a user's Google Calendar. The Google Calendar is both the graphical user interface for scheduling requests and the dashboard for viewing successful server bookings.
 
-## Calendar Configuration
-- **Calendar Name**: `Library Bookings`
-- **Time Zone**: `Asia/Jerusalem`
-- **Scanning Range**: The system scans for events in the **next 30 days** to catch upcoming booking requests.
+## 1. Calendar Configuration
+*   **Target Calendar:** Automatically creates or finds a calendar named `"Library Bookings"` (adjustable via `config.CALENDAR_NAME`).
+*   **Authentication:** Requires an OAuth2 `client_secret.json`. On the first run, it drops a `token.json` for persistent offline access.
+*   **Time Zone Requirement:** Hardcoded to `Asia/Jerusalem`.
 
-## Event Processing Logic
+## 2. Visual Status Indicators (Colors)
 
-### 1. Trigger
-The system scans the "Library Bookings" calendar for events.
-- **Match Criteria**: Event summary (title) MUST start with `"Booking"`.
-- **Ignore Criteria**: Event summary starts with `"[P]"`. This prefix indicates the event has already been **P**rocessed.
+The `CalendarStatus` enum mapping dictates the visual state of an event.
 
-### 2. Processing State (Yellow)
-When a valid "Booking" event is found:
-- The system immediately updates its color to **Yellow (ID: 5)**.
-- Ideally, the title is updated to prepend `[P]` at this stage or the user is notified that processing has started. (Currently, the `[P]` prefix is applied after processing to allow re-tries if it crashes mid-way, but visually it turns Yellow).
-
-### 3. Booking Action
-The system attempts to book the room for the specified time range.
-- **Mock Implementation**: Currently, this is a simulation (`mock_book_room`).
-- **Real Implementation**: This will eventually call the `BookingAgent` to perform the actual HTTP request to the library system.
-
-### 4. Outcome & Metadata Updates
-Based on the result of the booking attempt, the event is updated:
-
-#### Success
-- **Color**: **Green (ID: 10)**
-- **Title**: Prefixed with `[P] ` and suffixed with ` - Room [Room Number]`.
-    - Example: `[P] Booking: Study Session - Room 101`
-- **Location**: Set to the booked room name (e.g., `Room 101`).
-- **Description**: Appended with:
-    ```text
-    Booked for User: [User Name]
-    Room: [Room Number]
-    ```
-
-#### Failure
-- **Color**: **Red (ID: 11)**
-- **Title**: Prefixed with `[P] `.
-    - Example: `[P] Booking: Study Session`
-- **Description**: Appended with the error reason:
-    ```text
-    Error: [Error Message]
-    ```
-
-## Delete Feature
-
-### Trigger
-To delete an existing booking, add the keyword **"DELETE"** to the event title in Google Calendar.
-
-### Processing Logic
-The system periodically scans the calendar (every 5 minutes) for delete requests:
-
-1. **Detection**: Events containing "DELETE" in the title (case-insensitive)
-2. **Validation**: Only processes events with `[P]` or `[S]` prefix (processed/synced bookings)
-3. **Reference Extraction**: Extracts the reference number from the event description (`Ref: XXXXXXXX`)
-4. **Deletion**: Calls the library system API to delete the booking
-5. **Update**: On success, marks the event as `[DELETED]` with red color
-
-### Outcome
-
-#### Success
-- **Color**: **Red (ID: 11)**
-- **Title**: Prefixed with `[DELETED]` and DELETE keyword removed
-    - Example: `[DELETED] Booking: Study Session - Room 101`
-- **Description**: Appended with deletion timestamp:
-    ```text
-    Deleted on: 2026-02-13 23:00:00
-    ```
-
-#### Failure
-- **Color**: **Red (ID: 11)**
-- **Description**: Appended with the error reason:
-    ```text
-    Error: DELETE failed - No reference number found
-    ```
-    or
-    ```text
-    Error: DELETE failed - Server error
-    ```
-
-### Important Notes
-- Already deleted events (starting with `[DELETED]`) are not re-processed
-- Delete requests for unprocessed events (no `[P]` or `[S]` prefix) are skipped
-- The delete check runs every **5 minutes** and respects ongoing booking attempts
-
-## Google Calendar Colors (Event Color IDs)
-| Color ID | Name | Visual Color | Use Case |
+| Color ID | Name | Visual | Meaning |
 | :--- | :--- | :--- | :--- |
-| **5** | Yellow | #fbd75b | **Processing** / In Progress |
-| **10** | Green | #51b749 | **Success** / Booked |
-| **11** | Red | #dc2127 | **Failure** / Error / **Deleted** |
+| **5** | Yellow | #fbd75b | **PROCESSING:** The scheduler has locked this event and is attempting to snipe the room. |
+| **10** | Green | #51b749 | **SUCCESS / SYNCED:** The room is secured. |
+| **11** | Red | #dc2127 | **FAILURE / DELETED:** The system could not secure the room (timeout, all agents exhausted) or the user successfully deleted the event. |
+| **8** | Gray | #e1e1e1 | **DELETED:** Standard deleted state. |
 
-## Scripts & Tools
-- `google_calendar_client.py`: Core wrapper for Google Calendar API (Authentication, List, Insert, Update).
-- `poc_import_calendar.py`: Script to create a test event in the calendar.
-- `process_calendar_bookings.py`: Main tool that scans, processes, and updates events based on the logic above.
-- `list_library_events.py`: Utility to list upcoming events in the next 30 days.
+## 3. Metadata Prefixes
+
+The system relies on strict string prefixes in the Google Event `Summary` (Title) to determine state, prevent infinite processing loops, and differentiate origins.
+
+*   `[P]`: **Processed**. The system has finished trying to book this user-created request. It will ignore this event on future scans.
+*   `[S]`: **Synced**. The background sync daemon imported this event directly from the university server. It is read-only.
+*   `[DELETED]`: A user has successfully sent a cancel request and the server removed the booking.
+
+## 4. Workflows
+
+### A. The User Booking Request
+1.  User creates a standard event titled: `Booking: Study Session`
+2.  System scanning range: Next `CALENDAR_SCAN_DAYS` (default 8 days).
+3.  **Recognition:** The summary *must* start with `"Booking"` and *must not* start with `[P]` or `[S]`.
+4.  **Processing:** System turns it Yellow.
+5.  **Result Update:**
+    *   *Success:* Turns Green. Title becomes `[P] Booking: Study Session - Room 108`. Description logs the Agent Email and Reference ID.
+    *   *Failure:* Turns Red. Title becomes `[P] Booking: Study Session`. Description appends the failure error.
+
+### B. The Sync Import
+Runs on the background `_sync_worker` thread.
+
+1.  Fetches all SIDs 1-5 from the server.
+2.  Checks Google Calendar for identical events (Matching Start Time + Room Name in Description + User Email in Description).
+3.  If no match, creates a new Green event starting with `[S]`.
+
+### C. The DELETE Request
+Allows users to cancel existing bookings without logging into the clunky university portal.
+
+1.  User edits an existing *Processed* event title in Google Calendar: `DELETE [P] Booking: ...`
+2.  **Recognition:** Summary contains the substring `DELETE` (case-insensitive) AND starts with a `[P]` or `[S]` prefix.
+3.  **Execution:** The scanner extracts the server Reference ID string (e.g. `Ref: BA3382D5`) from the calendar description block.
+4.  It calls the server delete API.
+5.  **Result Update:**
+    *   *Success:* Event title shrinks to `[DELETED] Booking...` and color turns Gray (8).
+    *   *Failure:* Turns Red. Description states `"Permission denied or server error"`.
