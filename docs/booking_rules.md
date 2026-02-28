@@ -103,7 +103,7 @@ flowchart TD
     classDef decision fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000;
     classDef start fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000;
 
-    Start(["Daemon Wake Up<br>(Every config.SYNC_INTERVAL_SECONDS)"]) --> CheckActive{"Is Main Loop<br>Booking Active?"}:::decision
+    Start(["Daemon Wake Up<br>(Every config.CALENDAR_POLL_INTERVAL_SECONDS)"]) --> CheckActive{"Is Main Loop<br>Booking Active?"}:::decision
     
     CheckActive -- Yes --> Block["Block threads<br>(Wait for booking finish)"]:::start
     Block --> ExecuteSync
@@ -134,7 +134,7 @@ flowchart TD
     MarkDel --> LoopDel
     MarkErr --> LoopDel
     
-    LoopDel -- "Done" --> Sleep(["Sleep config.SYNC_INTERVAL_SECONDS"]):::start
+    LoopDel -- "Done" --> Sleep(["Sleep config.CALENDAR_POLL_INTERVAL_SECONDS"]):::start
     Sleep --> Start
 ```
 

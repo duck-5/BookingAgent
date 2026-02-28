@@ -85,7 +85,7 @@ flowchart TD
     classDef decision fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000;
     classDef fetch fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000;
 
-    Start(["Daemon Wake Up<br>(Every config.SYNC_INTERVAL_SECONDS)"]) --> CheckLock{"Is _booking_in_progress<br>Set True?"}:::decision
+    Start(["Daemon Wake Up<br>(Every config.CALENDAR_POLL_INTERVAL_SECONDS)"]) --> CheckLock{"Is _booking_in_progress<br>Set True?"}:::decision
     
     CheckLock -- Yes --> Pause["Block Thread until booking is complete<br>(Prevents overriding mid-booking metadata)"]:::fetch
     Pause --> FetchGCal
@@ -108,7 +108,7 @@ flowchart TD
     AddSync --> SidLoop
     SidLoop -- "Done (1 to 5)" --> UserLoop
     
-    UserLoop -- "Done" --> End(["Sleep config.SYNC_INTERVAL_SECONDS"])
+    UserLoop -- "Done" --> End(["Sleep config.CALENDAR_POLL_INTERVAL_SECONDS"])
 ```
 
 ## 3. The DELETE Mechanism
@@ -123,7 +123,7 @@ flowchart TD
     classDef fail fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#000;
     classDef del fill:#e1e1e1,stroke:#777,stroke-width:2px,color:#000;
 
-    Start(["Daemon Wake Up<br>(Every config.SYNC_INTERVAL_SECONDS)"]) --> GetEvents["Scan GCal for events containing<br>'DELETE' in Summary"]:::process
+    Start(["Daemon Wake Up<br>(Every config.CALENDAR_POLL_INTERVAL_SECONDS)"]) --> GetEvents["Scan GCal for events containing<br>'DELETE' in Summary"]:::process
     
     GetEvents --> Valid{"Does Summary start with<br>[P] or [S]?"}:::decision
     Valid -- "No (e.g., Unprocessed)" --> Skip[Skip Event]:::process
