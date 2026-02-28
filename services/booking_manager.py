@@ -63,6 +63,12 @@ class BookingManager:
                 log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason="All Rooms Taken", message=f"All rooms failed for {request.summary}")
                 logger.warning(str(log))
                 return BookingResult.ROOM_TAKEN, "All Rooms Taken"
+                
+            # Check if all agents are exhausted
+            if len(agents) == 0 or len(exhausted_emails) >= len(agents):
+                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason="All Agents Exhausted", message=f"No agents left to attempt booking for {request.summary}")
+                logger.warning(str(log))
+                return BookingResult.USER_LIMIT, "All Agents Exhausted or Failed"
 
             # Iterate Rooms
             for batch_name, rooms in zip(["HIGH", "LOW"], room_batches):
@@ -98,7 +104,7 @@ class BookingManager:
                             
                         elif res == BookingResult.USER_LIMIT:
                             exhausted_emails.add(agent.email)
-                            break # Try next agent
+                            continue # Try next agent on the same room
                         
                         elif res in [BookingResult.TOO_EARLY, BookingResult.CLOSED]:
                             # Fatal errors for this slot

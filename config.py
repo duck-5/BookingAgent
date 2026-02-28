@@ -13,7 +13,6 @@ GOOGLE_CALENDAR_ID = 'primary'
 CALENDAR_NAME = "Library Bookings"
 CALENDAR_SCAN_DAYS = 8
 
-SYNC_INTERVAL_SECONDS = 300  # 1 hour
 CALENDAR_POLL_INTERVAL_SECONDS = 300 # 5 minutes
 
 # Booking constraints
@@ -60,8 +59,6 @@ def setup_logging():
     
     # 2. Attach Dashboard Handler
     dash_handler = DashboardHandler()
-    dash_handler.setLevel(logging.INFO) # Only show INFO+ on dashboard to reduce noise? Or DEBUG?
-    # Let's show DEBUG for now but maybe filter in UI
     dash_handler.setLevel(logging.DEBUG) 
     root.addHandler(dash_handler)
 

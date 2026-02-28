@@ -15,6 +15,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from core.enums import CalendarStatus
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -354,6 +355,11 @@ class CalendarSync:
                 
                 # Check if it's a synced or processed event with matching room and user
                 if ge_summary.startswith("[S]") or ge_summary.startswith("[P]"):
+                    # First, try exact Reference ID match if available
+                    if ref_num != 'N/A' and f"Ref: {ref_num}" in ge_desc:
+                        exists = True
+                        break
+                        
                     # Check room and user in description (more reliable than title)
                     if f"Room: {room_name}" in ge_desc and f"User: {owner}" in ge_desc:
                         exists = True
@@ -376,7 +382,7 @@ class CalendarSync:
                 description=description,
                 location=room_name,  # Match [P] structure
                 calendar_id=self.calendar_id,
-                color_id=self.config.CalendarStatus.SYNCED
+                color_id=CalendarStatus.SYNCED
             )
             count += 1
 

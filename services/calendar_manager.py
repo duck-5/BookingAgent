@@ -108,7 +108,8 @@ class CalendarManager:
         """
         now = datetime.utcnow()
         end = now + timedelta(days=config.CALENDAR_SCAN_DAYS)
-        tmin = now.isoformat() + 'Z'
+        # Scan slightly in the past to ensure we catch currently active or slightly passed events
+        tmin = (now - timedelta(days=1)).isoformat() + 'Z'
         tmax = end.isoformat() + 'Z'
         
         requests = []
@@ -147,12 +148,15 @@ class CalendarManager:
         Updates the calendar event with the new status (Color, Title, Description).
         """
         try:
+            # Always fetch the strictly latest version of the event to avoid Sequence/Concurrency 400 errors
+            latest_event = self.client.service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
+            
             updates = {}
-            new_summary = original_event.get('summary', '')
+            new_summary = latest_event.get('summary', '')
             if not new_summary.startswith("[P]"):
                 new_summary = f"[P] {new_summary}"
 
-            current_desc = original_event.get('description', '')
+            current_desc = latest_event.get('description', '')
 
             if status == CalendarStatus.PROCESSING:
                 updates['colorId'] = status # Yellow
@@ -194,7 +198,7 @@ class CalendarManager:
 
             updates['summary'] = new_summary
             
-            body = {**original_event, **updates}
+            body = {**latest_event, **updates}
             
             self.client.service.events().update(
                 calendarId=self.calendar_id,
@@ -228,14 +232,17 @@ class CalendarManager:
             )
             
             # Update original event to exclude booked time
+            # Fetch strictly latest representation to avoid Sequence 400 Error
+            latest_event = self.client.service.events().get(calendarId=self.calendar_id, eventId=original_event['id']).execute()
+            
             if booked_end < orig_end:
-                updated_event = {**original_event}
+                updated_event = {**latest_event}
                 updated_event['start'] = {'dateTime': booked_end.isoformat(), 'timeZone': 'Asia/Jerusalem'}
                 self.client.service.events().update(
                     calendarId=self.calendar_id, eventId=original_event['id'], body=updated_event
                 ).execute()
             elif booked_start > orig_start:
-                updated_event = {**original_event}
+                updated_event = {**latest_event}
                 updated_event['end'] = {'dateTime': booked_start.isoformat(), 'timeZone': 'Asia/Jerusalem'}
                 self.client.service.events().update(
                     calendarId=self.calendar_id, eventId=original_event['id'], body=updated_event

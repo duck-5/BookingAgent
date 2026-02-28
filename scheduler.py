@@ -112,8 +112,9 @@ class Scheduler:
 
             # --- 1. DELETE ---
             # Skip deletions if we are in a critical booking window to save time/bandwidth
-            if not is_booking_window and not manual_run:
+            if not is_booking_window:
                  self._process_deletions()
+
                  
             if self._stop_event.is_set(): return
             
@@ -198,6 +199,7 @@ class Scheduler:
         """Step 1: Check for DELETE requests on GCal and execute them."""
         # Map to 'Scanner' entity as we are scanning for instructions
         state.op_start("Scanner", "Scanning for deletions...")
+        logger.info("[SCANNER] Checking for deletion requests...")
         try:
             delete_requests = self.calendar_manager.scan_for_deletions()
             if delete_requests:
@@ -525,11 +527,13 @@ class Scheduler:
                 # Fallthrough to process req1 normally as a single request
                 batch = [req1]
                 primary_req = batch[0]
-            else:
-                logger.info(f"[BOOKER] Attempting CONSECUTIVE booking for {req1.summary} + {req2.summary}")
-                
-                # 1. Try Combined
-                # Create a synthetic request
+
+        if len(batch) == 2:
+            req1, req2 = batch[0], batch[1]
+            logger.info(f"[BOOKER] Attempting CONSECUTIVE booking for {req1.summary} + {req2.summary}")
+            
+            # 1. Try Combined
+            # Create a synthetic request
             combined_req = BookingRequest(
                 event_id=f"{req1.event_id}_{req2.event_id}",
                 summary=f"Combined {req1.summary}",
@@ -643,6 +647,52 @@ class Scheduler:
         # Split the event if the booked portion is shorter than the original
         
         if self._check_and_split_event(primary_req, room_name, ref_num, agent_email):
+             # Check if the unbooked remainder is ALSO open right now
+             # We must shift the original event's start time to the booked end time
+             orig_end_str = primary_req.original_event['end'].get('dateTime') or primary_req.original_event['end'].get('date')
+             dt_orig_end = datetime.fromisoformat(orig_end_str)
+             if dt_orig_end.tzinfo is None: dt_orig_end = dt_orig_end.replace(tzinfo=timezone.utc)
+             else: dt_orig_end = dt_orig_end.astimezone(timezone.utc)
+             
+             req_end_utc = primary_req.end_time.astimezone(timezone.utc) if primary_req.end_time.tzinfo else primary_req.end_time.replace(tzinfo=timezone.utc)
+             
+             if req_end_utc < dt_orig_end:
+                 booked_hours = (primary_req.end_time - primary_req.start_time).total_seconds() / 3600
+                 remainder_opening_time = primary_req.opening_time + timedelta(hours=booked_hours)
+                 now = datetime.now(timezone.utc)
+                 
+                 # If it is open right now (or within 5 seconds of opening), process it recursively
+                 if remainder_opening_time <= now + timedelta(seconds=5):
+                     logger.info(f"[BOOKER] Remainder of split event {primary_req.summary} is already open! Processing consecutively.")
+                     
+                     # Create shifted synthetic event payload to mimic Google Calendar update
+                     updated_event = {**primary_req.original_event}
+                     
+                     # The split event logic saved this to Asia/Jerusalem, but isoformat works too
+                     # Let's preserve the original format for start
+                     orig_start_str = primary_req.original_event['start'].get('dateTime')
+                     if orig_start_str and 'T' in orig_start_str:
+                          # ISO 8601 string
+                          # It's safest to just give it a proper timezone aware ISO string matching the local format
+                          pass # Handled by BookingRequest parsing
+
+                     updated_event['start'] = {'dateTime': primary_req.end_time.isoformat(), 'timeZone': 'Asia/Jerusalem'}
+                     
+                     # The end_time of the request must be dt_orig_end (the real end)
+                     remainder_req = BookingRequest(
+                         event_id=primary_req.event_id,
+                         summary=primary_req.summary,
+                         start_time=primary_req.end_time, # The new start is the old end
+                         end_time=dt_orig_end, # The end is the original true end
+                         utc_start=req_end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                         utc_end=dt_orig_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                         original_event=updated_event,
+                         opening_time=remainder_opening_time
+                     )
+                     
+                     # Call recursively
+                     self._process_booking_batch([remainder_req])
+             
              return # Done, split handled the updates
 
         # Normal Update
