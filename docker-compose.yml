@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  booking-agent:
+    build: .
+    container_name: booking-agent
+    volumes:
+      - ./credentials.json:/app/credentials.json
+      - ./client_secret.json:/app/client_secret.json
+      - ./token.json:/app/token.json
+      - ./system.log:/app/system.log
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
