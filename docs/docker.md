@@ -63,5 +63,4 @@ The following files are mounted as volumes to ensure data persists and is editab
 - `credentials.json`: Agent list.
 - `client_secret.json`: API secrets.
 - `token.json`: Session token.
-- `logs/`: Application execution logs (`logs/system.log`).
-
+- `system.log`: All logging output from the container.

@@ -4,7 +4,7 @@ import os
 # --- Configuration ---
 CREDENTIALS_FILE = "credentials.json"
 
-LOG_FILE = os.getenv("LOG_FILE", "logs/system.log")
+LOG_FILE = "system.log"
 
 # Google Calendar
 GOOGLE_CALENDAR_CREDENTIALS = "client_secret.json"
