@@ -147,7 +147,10 @@ When a user requests a multi-hour block (e.g., 10:00-14:00) using a single calen
 
 ### Consecutive Priority & Merging
 For each 1-hour slot being booked:
-1. **Preceding Detection:** The system inspects Google Calendar for an existing successful booking whose end time matches the current slot's start time (`event.end == current.start`). This detects preceding bookings even if previous hours (e.g. Hours 1, 2, and 3) were already merged into a single multi-hour block.
+1. **Preceding Detection:** The system inspects Google Calendar for an existing successful booking whose end time matches the current slot's start time (`event.end == current.start`).
+   - Failed (`colorId=11`), deleted (`colorId=8`), or in-progress (`colorId=5`) events are strictly excluded.
+   - Events marked `[DELETED]`, `[D]`, or `[FAILED]` in their summaries are ignored.
+   - This detects preceding bookings even if previous hours (e.g. Hours 1, 2, and 3) were already merged into a single multi-hour block.
 2. **Prioritization:**
    - **Priority 1 (Room):** Target the same room as the preceding booking (so the user remains in the same room).
    - **Priority 2 (User):** Target the same user account.
@@ -157,3 +160,4 @@ For each 1-hour slot being booked:
      - The reference number is appended to the description.
      - The current slot's separate event is deleted.
    - If the combined duration would exceed 3 hours (e.g. Hour 4) or if a different room/user was used, the booking remains as an independent green event in the same room, strictly honoring the university's 3-hour limit per reservation.
+   - In `CalendarSync`, duplicate detection checks for exact reference numbers across all descriptions first. This prevents creating duplicate `[S]` events when server reservations correspond to subsequent hours of an already merged multi-hour event.

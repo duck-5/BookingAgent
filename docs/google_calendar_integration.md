@@ -41,7 +41,7 @@ The system relies on strict string prefixes in the Google Event `Summary` (Title
 Runs on the background `_sync_worker` thread.
 
 1.  Fetches all SIDs 1-5 from the server.
-2.  Checks Google Calendar for identical events (Matching Start Time + Room Name in Description + User Email in Description).
+2.  Checks Google Calendar for identical events (Exact Reference ID in description first, or matching Start Time + Room Name in Description + User Email in Description).
 3.  If no match, creates a new Green event starting with `[S]`.
 
 ### C. The DELETE Request

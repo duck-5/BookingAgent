@@ -244,5 +244,22 @@ class TestBookingManager(unittest.TestCase):
         agent1.delete_booking.assert_called_once_with("REF88")
         agent2.delete_booking.assert_called_once_with("REF88")
 
+    def test_attempt_booking_unconfigured_preferred_room_fallback(self):
+        """attempt_booking handles unconfigured room IDs gracefully without KeyError."""
+        agent = MagicMock()
+        agent.email = "agent@tau.ac.il"
+        agent.book_room.return_value = (BookingResult.SUCCESS, "REF999")
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+        self.agent_manager_mock.get_agent.return_value = agent
+
+        # preferred_room_id 999 is not in ALL_ROOMS
+        res, details = self.bm.attempt_booking(self.req, preferred_room_id=999)
+
+        self.assertEqual(res, BookingResult.SUCCESS)
+        agent_email, room_name, ref_num = details
+        self.assertEqual(agent_email, "agent@tau.ac.il")
+        self.assertEqual(room_name, "Room 999")
+        self.assertEqual(ref_num, "REF999")
+
 if __name__ == '__main__':
     unittest.main()

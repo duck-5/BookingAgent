@@ -156,10 +156,10 @@ class CalendarManager:
         Returns parsed BookingRequest objects.
         If split_multi_hour is True, splits multi-hour events on Google Calendar into 1-hour chunks.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         end = now + timedelta(days=config.CALENDAR_SCAN_DAYS)
-        tmin = now.isoformat() + 'Z'
-        tmax = end.isoformat() + 'Z'
+        tmin = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        tmax = end.strftime("%Y-%m-%dT%H:%M:%SZ")
         
         candidates = []
         try:
@@ -214,7 +214,7 @@ class CalendarManager:
         """
         Scans for DELETE requests in the coming days.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         end = now + timedelta(days=config.CALENDAR_SCAN_DAYS)
         # Scan slightly in the past to ensure we catch currently active or slightly passed events
         tmin = (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -387,14 +387,18 @@ class CalendarManager:
         try:
             items = self._fetch_events(tmin, tmax, order_by_start=False)
             for event in items:
-                summary = event.get('summary', '')
+                summary = event.get('summary') or ''
                 # check for [P] or [S]
                 if not ("[P]" in summary or "[S]" in summary): continue
-                # check for SUCCESS color (11?) - or just rely on description/summary
+                # Skip failed, deleted, or processing events
+                if event.get('colorId') in (CalendarStatus.FAILURE, CalendarStatus.DELETED, CalendarStatus.PROCESSING):
+                    continue
+                if '[DELETED]' in summary.upper() or '[D]' in summary or '[FAILED]' in summary.upper():
+                    continue
                 
                 # Check End Time
                 # We need strict matching. 
-                end_str = event['end'].get('dateTime') or event['end'].get('date')
+                end_str = (event.get('end') or {}).get('dateTime') or (event.get('end') or {}).get('date')
                 if not end_str: continue
                 try:
                     dt_end = parse_iso_datetime(end_str)
@@ -412,7 +416,7 @@ class CalendarManager:
                 
                 if abs((dt_end_utc - target_utc).total_seconds()) < 60: # 1 min tolerance
                      # Found candidate. Extract details.
-                     desc = event.get('description', '')
+                     desc = event.get('description') or ''
                      
                      extracted = self._extract_ref_and_user(desc)
                      if not extracted.ref_num or not extracted.user: continue
@@ -489,7 +493,7 @@ class CalendarManager:
             latest_prev['end'] = {'dateTime': curr_end, 'timeZone': tz}
             
             # Update description with new reference
-            current_desc = latest_prev.get('description', '')
+            current_desc = latest_prev.get('description') or ''
             if new_ref and new_ref not in current_desc:
                 latest_prev['description'] = f"{current_desc}\nRef: {new_ref}"
             

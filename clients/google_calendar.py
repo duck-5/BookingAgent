@@ -10,6 +10,7 @@ import os.path
 import json
 import logging
 import time
+import re
 from datetime import datetime, timedelta
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -339,27 +340,28 @@ class CalendarSync:
             # Description matching [P] format: User, Room, Ref
             description = f"User: {owner}\nRoom: {room_name}\nRef: {ref_num}\nSynced from Booking System"
             
-            # Enhanced duplicate detection: check time, room, and user
+            # Enhanced duplicate detection: check ref_num, time, room, and user
             exists = False
             for ge in google_events:
-                ge_summary = ge.get('summary', '')
-                ge_start = ge['start'].get('dateTime') or ge['start'].get('date')
-                ge_desc = ge.get('description', '')
+                ge_summary = ge.get('summary') or ''
+                ge_start = (ge.get('start') or {}).get('dateTime') or (ge.get('start') or {}).get('date')
+                ge_desc = ge.get('description') or ''
                 
+                # First, try exact Reference ID match if available
+                # (Matches even if start time differs due to merged multi-hour events)
+                if ref_num != 'N/A' and re.search(rf'Ref:\s*{re.escape(ref_num)}(?:\s|$)', ge_desc):
+                    exists = True
+                    break
+
                 if not ge_start:
                     continue
                 
-                # Must match start time
+                # Must match start time for subsequent checks
                 if not ge_start.startswith(server_iso_start):
                     continue
                 
                 # Check if it's a synced or processed event with matching room and user
                 if ge_summary.startswith("[S]") or ge_summary.startswith("[P]"):
-                    # First, try exact Reference ID match if available
-                    if ref_num != 'N/A' and f"Ref: {ref_num}" in ge_desc:
-                        exists = True
-                        break
-                        
                     # Check room and user in description (more reliable than title)
                     if f"Room: {room_name}" in ge_desc and f"User: {owner}" in ge_desc:
                         exists = True

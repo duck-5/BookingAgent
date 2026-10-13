@@ -200,3 +200,77 @@ class TestCalendarSync:
             
             # Verify Add Event was NOT called (Duplicate)
             mock_gc.add_event.assert_not_called()
+
+    def test_duplicate_detection_merged_event_different_start_time(self, mock_calendar_sync_deps):
+        """Verify duplicate detection finds existing ref in merged event even if start time differs."""
+        deps = mock_calendar_sync_deps
+        mock_gc = deps['gc']
+        mock_tau = deps['agent_cls'].return_value
+        
+        mock_tau.login.return_value = True
+        mock_tau.BASE_URL = "http://test"
+        mock_tau.session = MagicMock()
+        
+        # Server reports reservation for slot 11:00-12:00 with REF456
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{
+            'id': 'REF456',
+            'title': 'Room 108 Study',
+            'start': '2026-02-14 11:00',
+            'end': '2026-02-14 12:00',
+            'className': 'mine'
+        }]
+        mock_tau.session.get.return_value = mock_response
+        
+        # Google Calendar has a merged event starting at 10:00 (10:00-12:00) containing Ref: REF456
+        mock_gc.service.events().list.return_value.execute.return_value = {
+            'items': [{
+                'summary': '[P] Booking: Room 108',
+                'start': {'dateTime': '2026-02-14T10:00:00'},
+                'end': {'dateTime': '2026-02-14T12:00:00'},
+                'description': 'User: test@example.com\nRoom: Room 108\nRef: REF123\nRef: REF456'
+            }]
+        }
+        
+        with patch('os.path.exists', return_value=True):
+            syncer = CalendarSync()
+            syncer.sync_all_users()
+            
+            # Since REF456 is already in the merged event, add_event must NOT be called
+            mock_gc.add_event.assert_not_called()
+
+    def test_sync_all_users_null_description_safe(self, mock_calendar_sync_deps):
+        """Verify CalendarSync does not crash when Google event has description=None."""
+        deps = mock_calendar_sync_deps
+        mock_gc = deps['gc']
+        mock_tau = deps['agent_cls'].return_value
+        
+        mock_tau.login.return_value = True
+        mock_tau.BASE_URL = "http://test"
+        mock_tau.session = MagicMock()
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{
+            'id': 'REF999',
+            'title': 'Room 108 Study',
+            'start': '2026-02-14 11:00',
+            'end': '2026-02-14 12:00',
+            'className': 'mine'
+        }]
+        mock_tau.session.get.return_value = mock_response
+        
+        # Google Calendar has an event with 'description': None
+        mock_gc.service.events().list.return_value.execute.return_value = {
+            'items': [{
+                'summary': '[S] Room 108',
+                'start': {'dateTime': '2026-02-14T11:00:00'},
+                'description': None
+            }]
+        }
+        
+        with patch('os.path.exists', return_value=True):
+            syncer = CalendarSync()
+            # Should not raise TypeError: argument of type 'NoneType' is not iterable
+            syncer.sync_all_users()

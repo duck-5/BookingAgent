@@ -396,6 +396,9 @@ class Scheduler:
         def progress_cb(agent_email):
             state.op_update_item("Booker", item_id, "loading", f"{base_text} (Trying {agent_email})")
 
+        slot_duration = max(1.0, (req.end_time - req.start_time).total_seconds() / 3600.0)
+        max_hours = config.MAX_SINGLE_BOOKING_DURATION_HOURS if isinstance(getattr(config, 'MAX_SINGLE_BOOKING_DURATION_HOURS', None), (int, float)) else 3.0
+
         # 1. Check for preceding booking
         past_booking = self.calendar_manager.find_successful_booking(req.start_time)
         preferred_room_id = None
@@ -417,9 +420,6 @@ class Scheduler:
                 except Exception:
                     accumulated_hours = 1.0
 
-            slot_duration = max(1.0, (req.end_time - req.start_time).total_seconds() / 3600.0)
-            max_hours = config.MAX_SINGLE_BOOKING_DURATION_HOURS if isinstance(getattr(config, 'MAX_SINGLE_BOOKING_DURATION_HOURS', None), (int, float)) else 3.0
-            
             # Try extend via update_booking if within max duration limit
             if (accumulated_hours + slot_duration) <= max_hours + 0.05:
                 agent = self.agent_manager.get_agent(prev_user)

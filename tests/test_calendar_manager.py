@@ -281,3 +281,94 @@ def test_extract_ref_and_user_multiple_refs(calendar_manager):
     primary_ref, user = extracted
     assert primary_ref == "REF101"
     assert user == "user1@tau.ac.il"
+
+def test_find_successful_booking_ignores_failed_and_deleted_events(calendar_manager, mock_google_client):
+    """Test that find_successful_booking ignores events with FAILURE, DELETED or PROCESSING status."""
+    target_start = datetime(2026, 2, 14, 11, 0, 0, tzinfo=timezone.utc)
+    
+    # 1. Event with CalendarStatus.FAILURE
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_failed',
+            'summary': '[P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'colorId': CalendarStatus.FAILURE,
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 2. Event with CalendarStatus.DELETED
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_deleted',
+            'summary': '[P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'colorId': CalendarStatus.DELETED,
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 3. Event with [DELETED] in summary
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_deleted_title',
+            'summary': '[DELETED] [P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 4. Event with CalendarStatus.PROCESSING
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_processing',
+            'summary': '[P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'colorId': CalendarStatus.PROCESSING,
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 5. Event with [FAILED] in summary
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_failed_title',
+            'summary': '[FAILED] [P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 6. Event with [D] in summary
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_d_title',
+            'summary': '[D] [P] Booking: Room 108',
+            'description': 'User: agent@tau.ac.il\nRef: REF1\nRoom: Room 108',
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None
+
+    # 7. Event with description=None (verifying null safety)
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'evt_null_desc',
+            'summary': '[P] Booking: Room 108',
+            'description': None,
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T11:00:00Z'}
+        }]
+    }
+    assert calendar_manager.find_successful_booking(target_start) is None

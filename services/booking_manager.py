@@ -81,7 +81,7 @@ class BookingManager:
             for batch_name, rooms in zip(["HIGH", "LOW"], room_batches):
                 for rid in rooms:
                     if rid in self.failed_rooms: continue
-                    rname = config.ALL_ROOMS[rid]
+                    rname = config.ALL_ROOMS.get(rid, f"Room {rid}")
 
                     # Iterate Agents
                     for agent in agents:
