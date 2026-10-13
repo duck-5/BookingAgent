@@ -12,6 +12,7 @@ ENV/
 env.bak/
 venv.bak/
 system.log
+logs/
 token.json
 credentials.json
 client_secret.json

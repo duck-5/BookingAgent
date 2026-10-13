@@ -35,8 +35,12 @@ class GoogleCalendarClient:
 
     def authenticate(self):
         """Authenticates the user and creates a service object."""
-        if os.path.exists(self.token_file):
-            self.creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+        if os.path.exists(self.token_file) and os.path.isfile(self.token_file):
+            try:
+                self.creds = Credentials.from_authorized_user_file(self.token_file, SCOPES)
+            except Exception as e:
+                logger.error(f"Error reading token file {self.token_file}: {e}")
+                self.creds = None
         
         # If there are no (valid) credentials available, let the user log in.
         if not self.creds or not self.creds.valid:
@@ -48,8 +52,8 @@ class GoogleCalendarClient:
                     self.creds = None  # Force re-login
             
             if not self.creds:
-                if not os.path.exists(self.credentials_file):
-                    raise FileNotFoundError(f"Credentials file not found: {self.credentials_file}")
+                if not os.path.exists(self.credentials_file) or not os.path.isfile(self.credentials_file):
+                    raise FileNotFoundError(f"Credentials file not found or is a directory: {self.credentials_file}")
                 
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_file, SCOPES)
@@ -169,9 +173,12 @@ class CalendarSync:
         self.users = []
         
         try:
-            with open(config.CREDENTIALS_FILE, 'r') as f:
-                raw_users = json.load(f)
-                self.users = [UserCredentials(**u) for u in raw_users]
+            if os.path.exists(config.CREDENTIALS_FILE) and os.path.isfile(config.CREDENTIALS_FILE):
+                with open(config.CREDENTIALS_FILE, 'r') as f:
+                    raw_users = json.load(f)
+                    self.users = [UserCredentials(**u) for u in raw_users]
+            else:
+                logger.warning(f"Credentials file not found or is a directory: {config.CREDENTIALS_FILE}")
         except Exception as e:
             logger.error(f"Error loading credentials: {e}")
 

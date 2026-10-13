@@ -55,7 +55,7 @@ booking_agent/
 ├── scheduler.py            # Orchestrator (initializes services)
 ├── config.py               # Configuration and constants
 ├── credentials.json        # User accounts (list of email/pass/owner_id)
-├── system.log              # Runtime logs
+├── logs/                   # Runtime logs directory (logs/system.log)
 ├── clients/                # External API wrappers
 │   ├── __init__.py
 │   ├── tau_client.py       # TAU Booking System Client
@@ -111,7 +111,7 @@ The `Dockerfile` uses a **multi-stage build** based on `python:3.11-slim`:
 
 ### B. Deployment with Docker Compose
 A `docker-compose.yml` is provided for standard deployment. Key features include:
-- **Persistence**: Critical JSON files (`credentials.json`, `client_secret.json`, `token.json`) and the system log are mounted via host volumes.
+- **Persistence**: Critical JSON files (`credentials.json`, `client_secret.json`, `token.json`) and runtime logs (`logs/`) are mounted via host volumes.
 - **Auto-Restart**: Configured to restart unless manually stopped.
 - **Port Mapping**: Exposes the FastAPI dashboard on `8000:8000`.
 

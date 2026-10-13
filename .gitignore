@@ -1,6 +1,7 @@
 credentials.json
 booking_history.json
 *.log
+logs/
 __pycache__/
 booking_history.json
 build/

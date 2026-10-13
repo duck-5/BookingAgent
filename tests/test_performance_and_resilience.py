@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from collections import deque
 import logging
+import os
 
 from services.agent_manager import AgentManager
 from dashboard.state import MonitorState
@@ -102,6 +103,52 @@ class TestPerformanceAndResilience(unittest.TestCase):
                 h.close()
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    def test_logger_setup_creates_nested_directory(self):
+        """Verifies that setup_colored_logging automatically creates missing parent directories."""
+        import tempfile
+        import os
+        import shutil
+        tmp_dir = tempfile.mkdtemp()
+        nested_log = os.path.join(tmp_dir, "nested_logs", "system.log")
+        root = None
+        try:
+            root = setup_colored_logging(nested_log)
+            root.info("Testing nested log write")
+            self.assertTrue(os.path.isfile(nested_log))
+        finally:
+            if root:
+                for h in list(root.handlers):
+                    root.removeHandler(h)
+                    h.close()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_agent_manager_handles_directory_credentials_path(self):
+        """Verifies that AgentManager gracefully ignores directory paths and doesn't throw IsADirectoryError."""
+        import tempfile
+        import shutil
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            # Pass a directory path as credentials_file
+            mgr = AgentManager(tmp_dir)
+            self.assertEqual(len(mgr.agents), 0)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_google_calendar_client_handles_directory_token(self):
+        """Verifies that GoogleCalendarClient handles directory token file without unhandled crashes."""
+        import tempfile
+        import shutil
+        from clients.google_calendar import GoogleCalendarClient
+        tmp_dir = tempfile.mkdtemp()
+        dummy_secret = os.path.join(tmp_dir, "client_secret.json")
+        try:
+            client = GoogleCalendarClient(credentials_file=dummy_secret, token_file=tmp_dir)
+            # Authenticate should safely fail or raise FileNotFoundError for missing secret without crashing on directory token
+            with self.assertRaises(FileNotFoundError):
+                client.authenticate()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 if __name__ == '__main__':
     unittest.main()

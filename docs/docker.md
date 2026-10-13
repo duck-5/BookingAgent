@@ -59,8 +59,30 @@ This reduces the attack surface and minimizes download/storage requirements.
 
 ## Persistence
 
-The following files are mounted as volumes to ensure data persists and is editable from the host:
+The following files and directories are mounted as volumes to ensure data persists and is editable from the host:
 - `credentials.json`: Agent list.
 - `client_secret.json`: API secrets.
 - `token.json`: Session token.
-- `system.log`: All logging output from the container.
+- `logs/`: Application execution logs (`logs/system.log`). Mounted as a directory volume to enable clean log rotation without breaking container mount points.
+
+## Troubleshooting
+
+### "Are you trying to mount a directory onto a file (or vice-versa)?"
+This error occurs in Docker when a volume file (`system.log`, `credentials.json`, `token.json`, or `client_secret.json`) did not exist on the host before running `docker compose up`.
+Docker's default behavior for missing host bind sources is to create them as directories on the host, as well as inside the container's rootfs. If you later create the file on the host without removing the existing container, Docker fails to mount the file over the container's directory.
+
+**Resolution Steps:**
+1. Stop and remove the existing container:
+   ```bash
+   docker compose down
+   ```
+2. Remove any accidental directories created by Docker on the host:
+   ```bash
+   rm -rf system.log credentials.json client_secret.json token.json
+   ```
+3. Ensure your real `credentials.json`, `client_secret.json`, and `token.json` files exist on the host.
+4. Ensure `logs/` directory exists (or let Docker create it automatically).
+5. Start the container again:
+   ```bash
+   docker compose up -d
+   ```

@@ -1,5 +1,5 @@
 # Stage 1: Builder
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -25,6 +25,9 @@ COPY --from=builder /install /usr/local
 
 # Copy application source code
 COPY . .
+
+# Ensure logs directory exists
+RUN mkdir -p /app/logs
 
 # Expose the dashboard port
 EXPOSE 8000

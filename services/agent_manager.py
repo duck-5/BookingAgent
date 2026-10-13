@@ -15,8 +15,8 @@ class AgentManager:
         self._load_agents()
 
     def _load_agents(self):
-        if not os.path.exists(self.credentials_file):
-            logger.warning(f"Credentials file not found: {self.credentials_file}")
+        if not os.path.exists(self.credentials_file) or not os.path.isfile(self.credentials_file):
+            logger.warning(f"Credentials file not found or is a directory: {self.credentials_file}")
             return
 
         try:
