@@ -9,7 +9,6 @@ services:
       - ./client_secret.json:/app/client_secret.json
       - ./token.json:/app/token.json
       - ./system.log:/app/system.log
-      - /etc/localtime:/etc/localtime:ro
     ports:
       - "8000:8000"
     restart: unless-stopped
