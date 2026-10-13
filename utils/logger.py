@@ -51,9 +51,10 @@ def setup_colored_logging(log_file="system.log"):
     console_handler.setLevel(logging.DEBUG) # Show everything on console for now
     root_logger.addHandler(console_handler)
 
-    # File Handler (Standard)
+    # File Handler (Rotating)
+    from logging.handlers import RotatingFileHandler
     file_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
     file_handler.setFormatter(file_formatter)
     file_handler.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)

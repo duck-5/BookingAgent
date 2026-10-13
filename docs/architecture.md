@@ -74,7 +74,11 @@ booking_agent/
 │   ├── state.py            # Shared State
 │   └── logger.py           # UI logging handler
 ├── docs/                   # AI/Developer Documentation
-└── tests/                  # Unit and integration tests
+├── tests/                  # Unit and integration tests
+├── Dockerfile              # Multi-stage container build
+├── docker-compose.yml      # Orchestration and volume config
+├── .dockerignore           # Docker context filter
+└── requirements.txt        # Python dependencies
 ```
 
 ## 4. Concurrency & Threading Model
@@ -94,6 +98,30 @@ To prevent race conditions, the system uses a `threading.Event()` flag named `_b
     *   *Action:* The `_sync_worker` checks this flag before executing a sync. If it is clear, the Daemon blocks (pauses) until the booking finishes.
     *   *Reasoning:* This prevents the sync worker from accidentally overwriting `[P]` (Processed) metadata tags or triggering rate limits right when the system needs maximum performance.
 
-### C. Handled Edge Cases
-*   **Parallel Logins:** Managed via `ThreadPoolExecutor` (max 8 concurrent workers) during startup to quickly hydrate the `AgentManager`.
 *   **Target Conflict:** If multiple valid `BookingRequests` share the exact same opening time, the loops trigger sequentially in memory, with network latency bridging the gap.
+
+## 5. Docker & Containerization
+
+The system is fully containerized to ensure portability and isolation.
+
+### A. Image Design
+The `Dockerfile` uses a **multi-stage build** based on `python:3.11-slim`:
+- **Builder stage**: Installs tools and packages dependencies to a prefix.
+- **Runner stage**: Copies only the resulting packages and application code, significantly reducing the final image size.
+
+### B. Deployment with Docker Compose
+A `docker-compose.yml` is provided for standard deployment. Key features include:
+- **Persistence**: Critical JSON files (`credentials.json`, `client_secret.json`, `token.json`) and the system log are mounted via host volumes.
+- **Auto-Restart**: Configured to restart unless manually stopped.
+- **Port Mapping**: Exposes the FastAPI dashboard on `8000:8000`.
+
+### C. Headless Limitation
+Since the Google OAuth flow requires a browser, the initial `token.json` must be generated in a local (desktop) environment before being used in a containerized (headless) deployment.
+
+## 6. Performance & Optimization Architecture
+
+To prevent execution stuttering and latency during microsecond sniping:
+*   **CSRF Token Caching (`TauClient`):** The CSRF token is scraped once on login/initial request and cached for the session lifetime. It is only invalidated if the server returns an HTML redirect or session expiry error, eliminating unnecessary HTTP GET round trips before each booking POST.
+*   **Agent Quarantine (`AgentManager`):** Only accounts with verified active sessions (`is_logged_in == True`) are rotated during booking attempts. Accounts with invalid credentials are automatically quarantined from the active attack pool, preventing blocking network timeouts during time-critical reservation windows.
+*   **Bounded Dashboard Memory (`MonitorState`):** Dashboard logs are stored in a thread-safe `collections.deque(maxlen=300)` with $O(1)$ `appendleft`, eliminating memory copies and lock contention under high log volume.
+*   **Rotating File Logging (`utils.logger`):** Runtime logs are bounded via `RotatingFileHandler` (10 MB cap, 3 backups) to protect disk I/O performance and prevent file bloat.

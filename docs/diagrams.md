@@ -14,64 +14,43 @@ flowchart TD
     classDef success fill:#E8F5E9,stroke:#2E7D32,stroke-width:3px,color:#000;
     classDef fail fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:#000;
 
-    GoogleCalendar[(Google Calendar)] -->|Every Scan Interval| SchedulerScan["Scheduler calls<br>CalendarManager.scan_for_bookings()"]:::process
+    GoogleCalendar[(Google Calendar)] -->|Every Scan Interval| SchedulerScan["Scheduler calls<br>CalendarManager.scan_for_bookings(split_multi_hour=True)"]:::process
     
-    SchedulerScan --> ParseEvents{"Are Events valid<br>'Booking:' requests?"}:::decision
-    ParseEvents -- No --> Sleep["Sleep"]:::process
-    ParseEvents -- Yes --> CalcOpTime["Calculate Opening Time<br>(Start - 7d + 1h)"]:::process
+    SchedulerScan --> CheckMultiHour{"Duration > 1h?"}:::decision
+    CheckMultiHour -- Yes --> UpfrontSplit["Split into 1h events<br>on Google Calendar upfront"]:::process
+    CheckMultiHour -- No --> EachSlot
+    UpfrontSplit --> EachSlot["Process each 1-hour slot"]:::process
     
-    CalcOpTime --> Check3Hour{"Duration > config.MAX_SINGLE_BOOKING_DURATION_HOURS?"}:::decision
-    Check3Hour -- Yes --> SplitRequest["Split Request<br>(Keep first config.MAX_SINGLE_BOOKING_DURATION_HOURS h)"]:::process
-    Check3Hour -- No --> ReadyWait{"Wait for<br>Opening Time"}:::decision
-    SplitRequest --> ReadyWait
+    EachSlot --> CalcOpTime["Calculate Opening Time<br>(Slot Start - 7d + 1h)"]:::process
+    CalcOpTime --> ReadyWait{"Is Slot Open?<br>(Opening <= Now)"}:::decision
     
-    ReadyWait -- "T-(config.LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING) -> T-(config.FINAL_WAKE_UP_SECONDS_BEFORE_OPENING)" --> LockThread{"Acquire <br>_booking_in_progress <br>Thread Lock"}:::decision
+    ReadyWait -- No --> Sleep["Sleep until Opening Time<br>(Warming up session at T-60s)"]:::process
+    ReadyWait -- Yes --> MarkYellow["Update Event: PROCESSING (Yellow)"]:::process
     
-    LockThread -- Locked --> MarkYellow["Update Event: PROCESSING (Yellow)"]:::process
-    MarkYellow --> FireLoop["Call BookingManager.attempt_booking()"]:::process
+    MarkYellow --> CheckPrev{"Does Preceding<br>Booking Exist?<br>(event.end == slot.start)"}:::decision
     
-    FireLoop --> StartLoop[[Start The Attack Loop]]:::process
-    StartLoop --> RoomLoop{"Iterate Rooms<br>(High Priority -> Low Priority)"}:::decision
-    RoomLoop -- Next Room --> CheckRoomFailed{"Is Room in failed list?"}:::decision
-    CheckRoomFailed -- Yes --> RoomLoop
-    CheckRoomFailed -- No --> AgentLoop{"Iterate Agents<br>(Prioritize Last Successful)"}:::decision
+    CheckPrev -- Yes --> SetPreferred["Set Preferences:<br>Priority 1: Same Room<br>Priority 2: Same User"]:::process
+    CheckPrev -- No --> DefaultHierarchy["Use Default Room Hierarchy<br>(High Priority -> Low Priority)"]:::process
     
-    AgentLoop -- Next Agent --> API["POST /api/reservation.php?action=create"]:::process
-    API --> ResCheck{"Response Status?"}:::decision
+    SetPreferred --> AttemptBooking["BookingManager.attempt_booking()"]:::process
+    DefaultHierarchy --> AttemptBooking
     
-    ResCheck -- "ROOM_TAKEN<br>('conflicting')" --> MarkFailRoom["Add Room to failed list"]:::process
-    MarkFailRoom --> RoomLoop
+    AttemptBooking --> ResCheck{"Response Status?"}:::decision
+    ResCheck -- "TOO_EARLY" --> RetryEarly["Sleep 200ms & retry<br>SAME room & user"]:::process
+    RetryEarly --> AttemptBooking
     
-    ResCheck -- "USER_LIMIT<br>('limited')" --> MarkE["Add Agent to exhausted list"]:::process
-    MarkE --> AgentLoop
+    ResCheck -- "ROOM_TAKEN" --> MarkRoomFail["Blacklist room for slot.<br>Advance to next room"]:::process
+    MarkRoomFail --> AttemptBooking
     
-    ResCheck -- "TOO_EARLY<br>('this far in future')" --> SleepHalf["Sleep config.BOOKING_RETRY_INTERVAL_SECONDS"]:::process
-    SleepHalf --> API
+    ResCheck -- "USER_LIMIT" --> MarkUserFail["Blacklist user for slot.<br>Advance to next user"]:::process
+    MarkUserFail --> AttemptBooking
     
-    ResCheck -- "TIMEOUT (>config.BOOKING_TIMEOUT_SECONDS)" --> FailResult["Return FAILED"]:::fail
+    ResCheck -- "FAILED / TIMEOUT" --> MarkRed["Update Event: FAILED (Red)"]:::fail
     
-    AgentLoop -- "Done (All Agents Failed)" --> RoomLoop
-    RoomLoop -- "Done (All Rooms Failed)" --> FailResult
+    ResCheck -- "SUCCESS" --> CheckMerge{"Is Preceding Same Room<br>& Same User<br>& Total Duration <= 3h?"}:::decision
     
-    ResCheck -- "SUCCESS" --> SuccessResult["Return SUCCESS"]:::success
-    
-    SuccessResult --> CalendarResult{"Result Handler"}:::decision
-    FailResult --> CalendarResult
-    
-    CalendarResult -- "SUCCESS" --> SplitCheck{"Was this a partial success?<br>(Duration < Requested)"}:::decision
-    CalendarResult -- "FAILED" --> UpdateRed["Update Event: RED + Error"]:::fail
-    
-    SplitCheck -- No --> UpdateGreen["Update Event: GREEN<br>+ Ref ID/Room"]:::success
-    SplitCheck -- Yes --> SliceEvent["Create 1hr GREEN event.<br>Shift original YELLOW event<br>forward 1hr."]:::process
-    
-    UpdateRed --> ReleaseLock
-    UpdateGreen --> CheckMerge{"Are there adjacent<br>successful bookings?"}:::decision
-    CheckMerge -- Yes --> Merge["Merge continuous events<br>into one block"]:::process
-    CheckMerge -- No --> ReleaseLock
-    SliceEvent --> ReleaseLock
-    Merge --> ReleaseLock
-    
-    ReleaseLock{"Release<br>_booking_in_progress<br>Lock"}:::decision --> SyncWait["Wait for next Sync Daemon Cycle"]:::process
+    CheckMerge -- Yes --> Merge["Merge in Google Calendar<br>(Extend preceding event,<br>delete current event)"]:::success
+    CheckMerge -- No --> MarkGreen["Update Event: SUCCESS (Green)<br>Keep as separate event"]:::success
 ```
 
 ## 2. Server to Calendar Sync Mechanism
@@ -127,7 +106,7 @@ flowchart TD
     
     GetEvents --> Valid{"Does Summary start with<br>[P] or [S]?"}:::decision
     Valid -- "No (e.g., Unprocessed)" --> Skip[Skip Event]:::process
-    Valid -- Yes --> GetRef["Extract Reference Number<br>& User Email from Description"]:::process
+    Valid -- Yes --> GetRef["Extract Reference Numbers (one or multiple for merged events)<br>& User Email from Description"]:::process
     
     GetRef --> HasRef{"Reference found?"}:::decision
     HasRef -- No --> ErrorEvent["Update Event: RED<br>Error: No reference found"]:::fail
@@ -137,11 +116,11 @@ flowchart TD
     FindAgent -- "Found" --> Attempt[Use matching Agent]:::process
     FindAgent -- "Not Found" --> LoopAll[Fallback: Try all available Agents]:::process
     
-    Attempt --> CallDel["POST /api/reservation.php?api=delete"]:::process
+    Attempt --> CallDel["For each Ref Number:<br>POST /api/reservation.php?api=delete"]:::process
     LoopAll --> CallDel
     
-    CallDel --> Result{"Success?"}:::decision
+    CallDel --> Result{"All Refs<br>Cancelled?"}:::decision
     
     Result -- Yes --> ConfirmDel["Update Event: [DELETED]<br>Color = GRAY (8)<br>Append Deletion Timestamp"]:::del
-    Result -- No --> ErrorEvent2["Update Event: RED<br>Error: Permission denied"]:::fail
+    Result -- No --> ErrorEvent2["Update Event: RED<br>Error: Delete failed"]:::fail
 ```

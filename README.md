@@ -37,19 +37,10 @@ Create a `credentials.json` file in the root directory with a list of user accou
 ]
 ```
 
-### 2. Desired Bookings (`bookings.json`)
-Define the weekly schedule you want the bot to secure.
-```json
-[
-    {
-        "day_of_week": 4, 
-        "start_hour": 10,
-        "end_hour": 12,
-        "comment": "Friday Morning Study"
-    }
-]
-```
-*   `day_of_week`: 0=Monday, 6=Sunday.
+### 2. Schedule Requests via Google Calendar
+The bot scans your Google Calendar (named `Library Bookings`) for requests:
+*   **Booking Request**: Create an event with summary `Booking: Study Session` (or any title starting with `Booking:`). Multi-hour events are automatically decomposed into atomic 1-hour slots.
+*   **Cancellation Request**: Add `DELETE` to the event summary (e.g., `DELETE [P] Booking: Room 108`). The bot will cancel all associated reservation references on the university portal and update the event to `[DELETED]`.
 
 ### 3. Room Priorities (`config.py`)
 Edit `config.py` to define your preferred rooms.
@@ -62,30 +53,47 @@ HIGH_PRIORITY_ROOMS = {
 
 ## Usage
 
+### Option 1: Local Setup
 1.  **Install Dependencies**:
     ```bash
-    pip install requests
+    pip install -r requirements.txt
     ```
 2.  **Run the Scheduler**:
     ```bash
     python main.py
     ```
-    The system will start, scan for the next target slot, and sleep until the booking window triggers.
+
+### Option 2: Docker Setup (Recommended)
+1.  **Ensure Configuration Files Exist**:
+    Make sure `credentials.json`, `client_secret.json`, and `token.json` are in the project root.
+2.  **Start with Docker Compose**:
+    ```bash
+    docker compose up --build -d
+    ```
+3.  **Access Dashboard**:
+    Open `http://localhost:8000` in your browser.
+
+The system will start, scan for the next target slot, and sleep until the booking window triggers.
 
 ## File Structure
 *   `main.py`: Entry point. Starts the scheduler.
-*   `scheduler.py`: Core logic for time calculation, wait strategies, and coordinating the booking attack.
-*   `booking_agent.py`: Handles direct HTTP communication with the booking system (Login, CSRF, Reservation POSTs).
+*   `scheduler.py`: Core logic for time calculation, wait strategies, and coordinating booking/sync cycles.
+*   `services/booking_manager.py`: Coordinates agent attempts and room priority hierarchies.
+*   `clients/tau_client.py`: Handles direct HTTP communication with the booking system (Login, CSRF, Reservation POSTs).
+*   `services/calendar_manager.py`: Google Calendar integration, event parsing, chunk splitting, and merging.
 *   `docs/booking_rules.md`: High-level business rules and reservation constraints.
-*   `docs/system_logic.md`: Deep-dive technical documentation of algorithms and error handling.
-*   `docs/server_errors.md`: Reference for server error codes and handling.
+*   `docs/architecture.md`: System architecture and service layout.
+*   `docs/diagrams.md`: Flowcharts for booking and deletion pipelines.
+*   `docs/server_api.md`: Reference for server endpoints, payload formats, and error codes.
 *   `system.log`: Execution logs.
 
 ## Documentation
 For detailed insights into the system's operation:
-1.  [**Booking Rules**](docs/booking_rules.md): High-level constraints, booking windows, and priority definitions.
-2.  [**System Logic (Deep Dive)**](docs/system_logic.md): Technical explanation of the "Sniper" algorithm, precision timing, and internal decision trees.
-3.  [**Server Error Codes**](docs/server_errors.md): collaborative guide to known error keys and how the agent handles them.
+1.  [**Docker Guide**](docs/docker.md): Instructions for containerized deployment and troubleshooting Google Auth in headless environments.
+2.  [**Booking Rules**](docs/booking_rules.md): High-level constraints, booking windows, and priority definitions.
+3.  [**Architecture**](docs/architecture.md): Technical breakdown of modules, data flow, and state management.
+4.  [**Diagrams**](docs/diagrams.md): Visual flowcharts of the simplified 1-hour booking and sync pipeline.
+5.  [**Server API**](docs/server_api.md): Endpoint specifications, payload structures, and error handling.
 
 ## Disclaimer
 This tool is for educational purposes only. Automated booking may violate the terms of service of the target system. Use responsibly.

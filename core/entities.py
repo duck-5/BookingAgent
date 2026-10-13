@@ -33,6 +33,11 @@ class DeletionRequest:
     ref_num: str
     original_event: Dict[str, Any]
     owner_email: Optional[str]
+    ref_nums: Optional[List[str]] = None
+
+    def __post_init__(self):
+        if self.ref_nums is None:
+            self.ref_nums = [self.ref_num] if self.ref_num else []
 
 @dataclass
 class ActionLogDetails:

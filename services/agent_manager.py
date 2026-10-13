@@ -57,16 +57,33 @@ class AgentManager:
 
 
 
+    def refresh_agent_logins(self) -> int:
+        """Refreshes login sessions for all agents in parallel. Returns count of successful logins."""
+        if not self.agents:
+            return 0
+        success_count = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(self.agents))) as executor:
+            future_to_agent = {executor.submit(a.login): a for a in self.agents}
+            for future in concurrent.futures.as_completed(future_to_agent):
+                agent = future_to_agent[future]
+                try:
+                    if future.result():
+                        success_count += 1
+                except Exception as e:
+                    logger.error(f"[AGENT] Refresh login error for {agent.email}: {e}")
+        return success_count
+
     def get_rotational_agents(self, preferred_email: Optional[str] = None) -> List[TauClient]:
         """
-        Returns list of agents, optionally prioritizing one (e.g. last successful).
+        Returns list of active agents, prioritizing logged-in agents and preferred_email.
         """
-        active = list(self.agents)
+        logged_in = [a for a in self.agents if getattr(a, 'is_logged_in', False)]
+        active = logged_in if logged_in else list(self.agents)
         if preferred_email:
             priority = next((a for a in active if a.email == preferred_email), None)
             if priority:
                 active.remove(priority)
                 active.insert(0, priority)
                 
-        # Return all agents in order, prioritizing preferred_email if given
+        # Return agents in order, prioritizing preferred_email if given
         return active

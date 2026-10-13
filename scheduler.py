@@ -6,9 +6,9 @@ from typing import Optional
 
 import config
 from core.enums import BookingResult, CalendarStatus
-from core.entities import BookingRequest
+from core.entities import BookingRequest, DeletionRequest
 from services.agent_manager import AgentManager
-from services.calendar_manager import CalendarManager
+from services.calendar_manager import CalendarManager, parse_iso_datetime
 from services.booking_manager import BookingManager
 from clients.google_calendar import GoogleCalendarClient, CalendarSync
 from dashboard.state import state
@@ -37,6 +37,7 @@ class Scheduler:
 
         # Cooldown Tracker
         self.last_booking_time: Optional[datetime] = None
+        self._warmed_up_window: bool = False
 
         # Dashboard Hooks
         state.register_action("run_now", self.trigger_run_now)
@@ -109,6 +110,18 @@ class Scheduler:
                 if -config.LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING <= time_to_opening <= config.LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING:
                     is_booking_window = True
                     logger.info(f"[SYSTEM] In Booking Window ({int(time_to_opening)}s to open).")
+
+                    # Warm up agent logins in pre-opening window (T-60s)
+                    if config.FINAL_WAKE_UP_SECONDS_BEFORE_OPENING < time_to_opening <= config.LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING:
+                        if not self._warmed_up_window:
+                            logger.info("[SYSTEM] Pre-opening window reached (T-60s). Refreshing agent logins...")
+                            self.agent_manager.refresh_agent_logins()
+                            self._warmed_up_window = True
+            else:
+                self._warmed_up_window = False
+
+            if not is_booking_window:
+                self._warmed_up_window = False
 
             # --- 1. DELETE ---
             # Skip deletions if we are in a critical booking window to save time/bandwidth
@@ -208,21 +221,37 @@ class Scheduler:
                 
                 for req in delete_requests:
                     if self._stop_event.is_set(): break
-                    item_id = state.op_add_item("Scanner", f"Delete {req.ref_num}", "loading")
-                    success, reason = self.booking_manager.cancel_booking(req)
+                    refs_to_cancel = getattr(req, 'ref_nums', None) or ([req.ref_num] if req.ref_num else [])
+                    all_success = True
+                    reasons = []
+                    for ref in refs_to_cancel:
+                        item_id = state.op_add_item("Scanner", f"Delete {ref}", "loading")
+                        single_req = DeletionRequest(
+                            event_id=req.event_id,
+                            summary=req.summary,
+                            ref_num=ref,
+                            ref_nums=[ref],
+                            original_event=req.original_event,
+                            owner_email=req.owner_email
+                        )
+                        success, reason = self.booking_manager.cancel_booking(single_req)
+                        if success:
+                            logger.info(f"[SCANNER] Successfully deleted {ref}")
+                            state.op_update_item("Scanner", item_id, "success", "Deleted")
+                        else:
+                            logger.error(f"[SCANNER] Failed to delete {ref}: {reason}")
+                            state.op_update_item("Scanner", item_id, "error", f"Failed: {reason}")
+                            all_success = False
+                            reasons.append(f"{ref}: {reason}")
                     
-                    if success:
-                         logger.info(f"[SCANNER] Successfully deleted {req.ref_num}")
-                         state.op_update_item("Scanner", item_id, "success", "Deleted")
-                         self.calendar_manager.update_event_status(
-                             req.event_id, CalendarStatus.DELETED, req.original_event
-                         )
+                    if all_success:
+                        self.calendar_manager.update_event_status(
+                            req.event_id, CalendarStatus.DELETED, req.original_event
+                        )
                     else:
-                         logger.error(f"[SCANNER] Failed to delete {req.ref_num}: {reason}")
-                         state.op_update_item("Scanner", item_id, "error", f"Failed: {reason}")
-                         self.calendar_manager.update_event_status(
-                             req.event_id, CalendarStatus.FAILURE, req.original_event, reason=f"Delete Failed: {reason}"
-                         )
+                        self.calendar_manager.update_event_status(
+                            req.event_id, CalendarStatus.FAILURE, req.original_event, reason=f"Delete Failed: {', '.join(reasons)}"
+                        )
                 state.op_end("Scanner", "Idle (Deletions processed)")
             else:
                 state.op_end("Scanner", "Idle")
@@ -266,7 +295,7 @@ class Scheduler:
             
             # --- PHASE 1: SCAN ---
             state.op_start("Scanner", "Scanning for bookings...")
-            all_requests = self.calendar_manager.scan_for_bookings()
+            all_requests = self.calendar_manager.scan_for_bookings(split_multi_hour=True)
             
             # Filter for actionable requests vs pending
             now = datetime.now(timezone.utc)
@@ -293,28 +322,11 @@ class Scheduler:
             # --- PHASE 2: BOOK ---
             if actionable_requests:
                  state.op_start("Booker", f"Processing {len(actionable_requests)} Bookings...")
-                 
                  actionable_requests.sort(key=lambda x: x.start_time)
-                 processed_ids = set()
                  
-                 for i, req in enumerate(actionable_requests):
-                     if req.event_id in processed_ids: continue
-                     
-                     next_req = None
-                     if i + 1 < len(actionable_requests):
-                         candidate = actionable_requests[i+1]
-                         if abs((candidate.start_time - req.end_time).total_seconds()) < 60:
-                             next_req = candidate
-                     
-                     current_batch = [req]
-                     if next_req: 
-                         current_batch.append(next_req)
-                         processed_ids.add(next_req.event_id)
-                     
-                     processed_ids.add(req.event_id)
-                     
-                     self._process_booking_batch(current_batch)
-                                      
+                 for req in actionable_requests:
+                     self._process_single_booking(req)
+                                       
                  state.op_end("Booker", "Idle (Finished Batch)")
             else:
                  # Ensure Booker is also Idle if nothing to do (clears previous state)
@@ -326,17 +338,6 @@ class Scheduler:
             state.op_end("Scanner", "Error")
             state.op_end("Booker", "Error")
 
-    def _process_booking_batch(self, batch):
-        """
-        ... logic handles actual booking ...
-        uses state.op_add_item("Booker", ...)
-        """
-        # I need to update the internal calls in this method too!
-        # Since I can't overwrite the whole file easily, and this method is large.
-        # I will rely on `multi_replace` or just rewrite the `_process_booking_batch` call site logic here 
-        # but I can't see `_process_booking_batch` body in this replacement chunk.
-        # I must ensure `_process_booking_batch` uses "Booker". 
-        pass 
 
     def _check_and_set_cooldown(self, req: BookingRequest = None):
         # We always want to cooldown after any booking attempt to prevent GCal sync race conditions
@@ -351,7 +352,7 @@ class Scheduler:
         if not orig_end_str:
             return False
             
-        dt_orig_end = datetime.fromisoformat(orig_end_str)
+        dt_orig_end = parse_iso_datetime(orig_end_str)
         if dt_orig_end.tzinfo is None: dt_orig_end = dt_orig_end.replace(tzinfo=timezone.utc)
         else: dt_orig_end = dt_orig_end.astimezone(timezone.utc)
         
@@ -370,354 +371,165 @@ class Scheduler:
             return True
         return False
 
-    def _handle_consecutive_booking(self, req: BookingRequest, past_booking: tuple) -> bool:
+    def _process_single_booking(self, req: BookingRequest):
         """
-        Handles consecutive booking logic.
-        1. Attempt Update
-        2. Attempt New Booking (Same Room) -> gracefully falls back exactly as requested
-        Returns True if handled, False if we should fallback purely to normal unstructured flow.
+        Processes a single 1-hour booking request:
+        1. Checks for preceding bookings ending at req.start_time.
+        2. If previous booking exists:
+           - Prioritizes same room (preferred_room_id) and same person (preferred_user_email).
+           - If combined duration <= MAX_SINGLE_BOOKING_DURATION_HOURS, attempts extending via update_booking.
+        3. If extend not applicable or fails:
+           - Executes attempt_booking with preferred room and user.
+        4. On success:
+           - Merges in Google Calendar if same person and same room and duration <= MAX_SINGLE_BOOKING_DURATION_HOURS.
+           - Otherwise updates event to SUCCESS.
+        5. On failure:
+           - Updates event to FAILURE.
         """
-        evt, ref, user, room = past_booking
-        
-        room_id = next((k for k, v in config.ALL_ROOMS.items() if v == room), None)
-        if room_id is None:
-            return False
-            
-        orig_start_str = evt['start'].get('dateTime') or evt['start'].get('date')
-        if not orig_start_str: return False
-        
-        dt_orig_start = datetime.fromisoformat(orig_start_str)
-        if dt_orig_start.tzinfo is None: dt_orig_start = dt_orig_start.replace(tzinfo=timezone.utc)
-        else: dt_orig_start = dt_orig_start.astimezone(timezone.utc)
-        start_utc = dt_orig_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        self.calendar_manager.update_event_status(req.event_id, CalendarStatus.PROCESSING, req.original_event)
 
-        total_duration = (req.end_time - dt_orig_start).total_seconds() / 3600
-        if total_duration > config.MAX_SINGLE_BOOKING_DURATION_HOURS + 0.05:
-             logger.info(f"[BOOKER] Extending {ref} to {req.end_time.strftime('%H:%M')} exceeds {config.MAX_SINGLE_BOOKING_DURATION_HOURS}h limit. Force skipping to new booking fallback.")
-             agent = None # Bypass extend logic
-        else:
-             agent = self.agent_manager.get_agent(user)
-             
-        if agent:
-             item_id = state.op_add_item("Booker", f"Extending {ref}...", "loading", agent=user)
-             success, reason = agent.update_booking(ref, room_id, start_utc, req.utc_end)
-             if success:
-                 self._check_and_set_cooldown(req)
-                 state.op_update_item("Booker", item_id, "success", f"Extended ({req.end_time.strftime('%H:%M')})")
-                 
-                 # Check if split needed
-                 if self._check_and_split_event(req, room, ref, user):
-                     return True
-
-                 self.calendar_manager.update_event_status(
-                     req.event_id, CalendarStatus.SUCCESS, req.original_event, 
-                     room_name=room, ref_num=ref, user=user
-                 )
-                 return True
-             else:
-                 state.op_update_item("Booker", item_id, "warning", f"Extend failed. Trying new booking in {room}...", details=f"Extend failed: {reason}")
-        
-        # 2. Attempt New Booking (Same Room)
-        # This implicitly covers "if that fails just book something" because attempt_booking handles iterating other rooms if the preferred one is taken
-        item_id = state.op_add_item("Booker", f"Booking {req.summary} in {room}...", "loading")
-        self._booking_in_progress.clear()
-        try:
-             res, details = self.booking_manager.attempt_booking(req, stop_event=self._stop_event, preferred_room_id=room_id)
-             self._check_and_set_cooldown(req)
-        finally:
-             self._booking_in_progress.set()
-
-        if res == BookingResult.SUCCESS:
-             agent_email, room_name, ref_num = details
-             state.op_update_item("Booker", item_id, "success", f"{room_name} ({ref_num})", agent=agent_email)
-             
-             if self._check_and_split_event(req, room_name, ref_num, agent_email):
-                  return True
-
-             self.calendar_manager.update_event_status(
-                  req.event_id, CalendarStatus.SUCCESS, req.original_event, 
-                  room_name=room_name, ref_num=ref_num, user=agent_email
-             )
-             return True
-             
-        else:
-             error_msg = details if details else "Unknown Failure"
-             state.op_update_item("Booker", item_id, "error", f"Failed", details=str(error_msg))
-             self.calendar_manager.update_event_status(req.event_id, CalendarStatus.FAILURE, req.original_event, reason=str(error_msg))
-             return True # Handled (even as a failure)
-
-
-    def _process_booking_batch(self, batch):
-        """
-        Process a batch of 1 or 2 requests. 
-        If 2, try to book combined. If failed, book first then extend.
-        """
-        if not batch: return
-        
-        # --- SPLITTING LOGIC ---
-        # Check against 7-day rule (approx). 
-        # Actually, the 7-day rule is enforced by the scanner (it calculates `opening_time`).
-        # If `req.end_time` > `opening_time + 1h`, it's a multi-hour request that is only partially open.
-        # Wait, the `opening_time` is when the *entry* becomes bookable. 
-        # Usually, a 2h slot 10-12 becomes bookable at T (for 10-11) and T+1 (for 11-12).
-        # So if we are at T, 10-11 is open, 11-12 is not.
-        # The scanner logic uses `opening_time = dt_start - 7 days + 1 hour`. 
-        # So if `now >= opening_time`, the start is valid.
-        
-        # We need to process each request in the batch to see if it needs splitting.
-        # But wait, batching logic grouped adjacent requests. 
-        # A single request object (from Google Calendar) might be 2 hours long.
-        # If so, it needs splitting.
-        
-        active_batch = []
-        
-        now = datetime.now(timezone.utc)
-        
-        for req in batch:
-             # Check if multi-hour single event
-             duration = (req.end_time - req.start_time).total_seconds() / 3600
-             if duration > 1.05: # Allow small margin
-                 # Calculate how many hours are currently open
-                 # opening_time is when the FIRST hour opens
-                 req_opening_utc = req.opening_time.replace(tzinfo=timezone.utc) if req.opening_time.tzinfo is None else req.opening_time.astimezone(timezone.utc)
-                 delta_hours = (now - req_opening_utc).total_seconds() / 3600
-                 hours_open = max(1, int(delta_hours) + 1)
-                 
-                 # We can book at most 3 hours atomically, and no more than what's open
-                 target_duration = min(duration, hours_open, float(config.MAX_SINGLE_BOOKING_DURATION_HOURS))
-                 
-                 if target_duration < duration - 0.05:
-                     logger.info(f"[BOOKER] Slicing multi-hour request {req.summary} from {duration}h to {target_duration}h")
-                     # Split!
-                     sub_end = req.start_time + timedelta(hours=target_duration)
-                     sub_utc_end = sub_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                     
-                     sub_req = BookingRequest(
-                         event_id=req.event_id,
-                         summary=req.summary,
-                         start_time=req.start_time,
-                         end_time=sub_end,
-                         utc_start=req.utc_start,
-                         utc_end=sub_utc_end,
-                         original_event=req.original_event,
-                         opening_time=req.opening_time
-                     )
-                     
-                     # We only process the sub_req. The remainder is handled by the calendar update (split).
-                     active_batch.append(sub_req)
-                     continue
-            
-             active_batch.append(req)
-
-        if not active_batch: return
-        batch = active_batch # Update batch with split items
-        
-        # UI Update for batch
-        for req in batch:
-             self.calendar_manager.update_event_status(req.event_id, CalendarStatus.PROCESSING, req.original_event)
-
-        primary_req = batch[0]
-        
-        if len(batch) == 2:
-            req1, req2 = batch[0], batch[1]
-            
-            total_dur = (req2.end_time - req1.start_time).total_seconds() / 3600
-            if total_dur > config.MAX_SINGLE_BOOKING_DURATION_HOURS + 0.05:
-                logger.info(f"[BOOKER] Skipping combined booking for {req1.summary}, total duration {total_dur}h exceeds {config.MAX_SINGLE_BOOKING_DURATION_HOURS}h limit.")
-                # Fallthrough to process req1 normally as a single request
-                batch = [req1]
-                primary_req = batch[0]
-
-        if len(batch) == 2:
-            req1, req2 = batch[0], batch[1]
-            logger.info(f"[BOOKER] Attempting CONSECUTIVE booking for {req1.summary} + {req2.summary}")
-            
-            # 1. Try Combined
-            # Create a synthetic request
-            combined_req = BookingRequest(
-                event_id=f"{req1.event_id}_{req2.event_id}",
-                summary=f"Combined {req1.summary}",
-                start_time=req1.start_time,
-                end_time=req2.end_time,
-                utc_start=req1.utc_start,
-                utc_end=req2.utc_end,
-                original_event=req1.original_event, # Use first as base
-                opening_time=req1.opening_time
-            )
-            
-            slot_str = f"{req1.start_time.strftime('%H:%M')}-{req2.end_time.strftime('%H:%M')}"
-            base_text = f"Booking: '{req1.summary}' at {slot_str}"
-            item_id = state.op_add_item("Booker", base_text, "loading")
-            
-            def progress_cb(agent_email):
-                state.op_update_item("Booker", item_id, "loading", f"{base_text} (Trying {agent_email})")
-            
-            self._booking_in_progress.clear()
-            try:
-                # We need to pass stop_event
-                res, details = self.booking_manager.attempt_booking(combined_req, stop_event=self._stop_event, progress_callback=progress_cb)
-                self._check_and_set_cooldown(combined_req)
-            finally:
-                 self._booking_in_progress.set()
-
-            if res == BookingResult.SUCCESS:
-                agent_email, room_name, ref_num = details
-                state.op_update_item("Booker", item_id, "success", f"Secured! ({room_name})", agent=agent_email)
-                
-                # Update BOTH events
-                self.calendar_manager.update_event_status(req1.event_id, CalendarStatus.SUCCESS, req1.original_event, room_name=room_name, ref_num=ref_num, user=agent_email)
-                self.calendar_manager.update_event_status(req2.event_id, CalendarStatus.SUCCESS, req2.original_event, room_name=room_name, ref_num=ref_num, user=agent_email)
-                return
-
-            else:
-                state.op_update_item("Booker", item_id, "warning", f"Combined Failed. Trying single...")
-                # Fallback to Single + Extend
-                batch = [req1]
-                primary_req = batch[0]
-        
-        # 2. Process Primary (Normal or First of pair)
-        # Look-Back Logic: check if we can EXTEND a previous booking instead of creating new
-        # Only if we are dealing with a single request (not a combined pair attempt)
-        if len(batch) == 1:
-             past_booking = self.calendar_manager.find_successful_booking(primary_req.start_time)
-             if past_booking:
-                 logger.info(f"[BOOKER] Found consecutive past booking. Delegating to consecutive handler.")
-                 if self._handle_consecutive_booking(primary_req, past_booking):
-                     return # Handled
-        
-        
-        slot_str = f"{primary_req.start_time.strftime('%H:%M')}-{primary_req.end_time.strftime('%H:%M')}"
-        base_text = f"Booking: '{primary_req.summary}' at {slot_str}"
+        slot_str = f"{req.start_time.strftime('%H:%M')}-{req.end_time.strftime('%H:%M')}"
+        base_text = f"Booking: '{req.summary}' at {slot_str}"
         item_id = state.op_add_item("Booker", base_text, "loading")
-        state.update_status("next_action", f"Booking {primary_req.summary}")
-        
+        state.update_status("next_action", f"Booking {req.summary}")
+
         def progress_cb(agent_email):
             state.op_update_item("Booker", item_id, "loading", f"{base_text} (Trying {agent_email})")
-        
+
+        # 1. Check for preceding booking
+        past_booking = self.calendar_manager.find_successful_booking(req.start_time)
+        preferred_room_id = None
+        preferred_user = None
+        accumulated_hours = 0.0
+        prev_event = None
+        prev_ref = None
+
+        if past_booking:
+            prev_event, prev_ref, prev_user, prev_room = past_booking[0], past_booking[1], past_booking[2], past_booking[3]
+            preferred_room_id = next((k for k, v in config.ALL_ROOMS.items() if v == prev_room), None)
+            preferred_user = prev_user
+            accumulated_hours = getattr(past_booking, 'duration_hours', None)
+            if accumulated_hours is None and prev_event:
+                try:
+                    p_start = parse_iso_datetime(prev_event['start'].get('dateTime') or prev_event['start'].get('date'))
+                    p_end = parse_iso_datetime(prev_event['end'].get('dateTime') or prev_event['end'].get('date'))
+                    accumulated_hours = max(1.0, (p_end - p_start).total_seconds() / 3600.0)
+                except Exception:
+                    accumulated_hours = 1.0
+
+            slot_duration = max(1.0, (req.end_time - req.start_time).total_seconds() / 3600.0)
+            max_hours = config.MAX_SINGLE_BOOKING_DURATION_HOURS if isinstance(getattr(config, 'MAX_SINGLE_BOOKING_DURATION_HOURS', None), (int, float)) else 3.0
+            
+            # Try extend via update_booking if within max duration limit
+            if (accumulated_hours + slot_duration) <= max_hours + 0.05:
+                agent = self.agent_manager.get_agent(prev_user)
+                if agent and preferred_room_id and prev_event:
+                    orig_start_str = prev_event['start'].get('dateTime') or prev_event['start'].get('date')
+                    if orig_start_str:
+                        dt_orig_start = parse_iso_datetime(orig_start_str)
+                        if dt_orig_start.tzinfo is None:
+                            dt_orig_start = dt_orig_start.replace(tzinfo=timezone.utc)
+                        else:
+                            dt_orig_start = dt_orig_start.astimezone(timezone.utc)
+                        start_utc = dt_orig_start.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+                        state.op_update_item("Booker", item_id, "loading", f"Extending {prev_ref}...", agent=prev_user)
+                        
+                        extend_timeout = config.BOOKING_TIMEOUT_SECONDS if isinstance(getattr(config, 'BOOKING_TIMEOUT_SECONDS', None), (int, float)) else 120
+                        extend_retry_interval = config.BOOKING_RETRY_INTERVAL_SECONDS if isinstance(getattr(config, 'BOOKING_RETRY_INTERVAL_SECONDS', None), (int, float)) else 0.5
+                        extend_start_time = time.time()
+                        extend_success = False
+                        extend_last_reason = None
+                        while not self._stop_event.is_set():
+                            if time.time() - extend_start_time > extend_timeout:
+                                extend_last_reason = "Extend Timeout"
+                                break
+                            update_res = agent.update_booking(prev_ref, preferred_room_id, start_utc, req.utc_end)
+                            if isinstance(update_res, tuple) and len(update_res) == 2 and update_res[0] is True:
+                                self._check_and_set_cooldown(req)
+                                state.op_update_item("Booker", item_id, "success", f"Extended ({req.end_time.strftime('%H:%M')})", agent=prev_user)
+                                # Merge in calendar (deletes current event)
+                                merged = self.calendar_manager.merge_adjacent_events(
+                                    prev_event, req.original_event, prev_ref, prev_room, prev_user
+                                )
+                                if not merged:
+                                    logger.warning(f"[BOOKER] Merge after extend failed for {req.event_id}; keeping as single SUCCESS event.")
+                                    self.calendar_manager.update_event_status(
+                                        req.event_id, CalendarStatus.SUCCESS, req.original_event,
+                                        room_name=prev_room, ref_num=prev_ref, user=prev_user
+                                    )
+                                extend_success = True
+                                return
+                            
+                            extend_last_reason = update_res[1] if isinstance(update_res, tuple) and len(update_res) > 1 else str(update_res)
+                            if "too early" in str(extend_last_reason).lower():
+                                logger.info(f"[BOOKER] Extend returned Too Early for {prev_ref}, retrying...")
+                                time.sleep(extend_retry_interval)
+                                continue
+                            else:
+                                break
+                        
+                        if not extend_success:
+                            state.op_update_item("Booker", item_id, "warning", f"Extend failed. Trying new booking in {prev_room}...", details=f"Extend failed: {extend_last_reason}")
+
+        # 2. Attempt New Booking (with preferred room and user)
         self._booking_in_progress.clear()
         try:
-             res, details = self.booking_manager.attempt_booking(primary_req, stop_event=self._stop_event, progress_callback=progress_cb)
-             # Track activity regardless of result to be safe? 
-             # No, only if we suspect server state changed. 
-             # But let's set it on any attempt to be safe against race conditions.
-             self._check_and_set_cooldown(primary_req)
+            res, details = self.booking_manager.attempt_booking(
+                req,
+                stop_event=self._stop_event,
+                preferred_room_id=preferred_room_id,
+                preferred_user_email=preferred_user,
+                progress_callback=progress_cb
+            )
+            self._check_and_set_cooldown(req)
         finally:
-             self._booking_in_progress.set()
-             
-        # --- Graceful Degradation Strategy ---
-        duration_h = (primary_req.end_time - primary_req.start_time).total_seconds() / 3600
-        current_req = primary_req
-        
-        while res != BookingResult.SUCCESS and duration_h >= 1.95:
-             # Slice 1 hour off the end and retry
-             duration_h -= 1
-             logger.info(f"[BOOKER] Booking failed. Degrading to {int(duration_h)}h...")
-             state.op_update_item("Booker", item_id, "warning", f"Failed. Retrying for {int(duration_h)}h...")
-             
-             new_end = current_req.start_time + timedelta(hours=duration_h)
-             new_utc_end = new_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-             
-             degraded_req = BookingRequest(
-                 event_id=current_req.event_id, summary=current_req.summary, start_time=current_req.start_time, end_time=new_end,
-                 utc_start=current_req.utc_start, utc_end=new_utc_end, original_event=current_req.original_event, opening_time=current_req.opening_time
-             )
-             res, details = self.booking_manager.attempt_booking(degraded_req, stop_event=self._stop_event, progress_callback=progress_cb)
-             self._check_and_set_cooldown(degraded_req)
-             current_req = degraded_req
-             
-        primary_req = current_req # Update primary_req for the split detection logic below
-             
-        if res != BookingResult.SUCCESS:
-             # Use the detailed error message from booking_manager
-             error_msg = details if details else "Unknown Failure"
-             # Since Booker cycles through agents, we don't have a specific agent if all failed
-             state.op_update_item("Booker", item_id, "error", f"Failed", details=str(error_msg))
-             self.calendar_manager.update_event_status(primary_req.event_id, CalendarStatus.FAILURE, primary_req.original_event, reason=str(error_msg))
-             # If valid pair, fail second too
-             if len(batch) > 1:
-                 # Mark second as failed too to avoid orphan attempt
-                 self.calendar_manager.update_event_status(batch[1].event_id, CalendarStatus.FAILURE, batch[1].original_event, reason="Previous slot failed")
-             return
+            self._booking_in_progress.set()
 
-        # Success on Primary
-        agent_email, room_name, ref_num = details
-        # Update item with agent so UI groups it properly
-        state.op_update_item("Booker", item_id, "success", f"{room_name} ({ref_num})", agent=agent_email)
-        
-        # Split the event if the booked portion is shorter than the original
-        
-        if self._check_and_split_event(primary_req, room_name, ref_num, agent_email):
-             # Check if the unbooked remainder is ALSO open right now
-             # We must shift the original event's start time to the booked end time
-             orig_end_str = primary_req.original_event['end'].get('dateTime') or primary_req.original_event['end'].get('date')
-             dt_orig_end = datetime.fromisoformat(orig_end_str)
-             if dt_orig_end.tzinfo is None: dt_orig_end = dt_orig_end.replace(tzinfo=timezone.utc)
-             else: dt_orig_end = dt_orig_end.astimezone(timezone.utc)
-             
-             req_end_utc = primary_req.end_time.astimezone(timezone.utc) if primary_req.end_time.tzinfo else primary_req.end_time.replace(tzinfo=timezone.utc)
-             
-             if req_end_utc < dt_orig_end:
-                 booked_hours = (primary_req.end_time - primary_req.start_time).total_seconds() / 3600
-                 remainder_opening_time = primary_req.opening_time + timedelta(hours=booked_hours)
-                 now = datetime.now(timezone.utc)
-                 
-                 # If it is open right now (or within 5 seconds of opening), process it recursively
-                 if remainder_opening_time <= now + timedelta(seconds=5):
-                     logger.info(f"[BOOKER] Remainder of split event {primary_req.summary} is already open! Processing consecutively.")
-                     
-                     # Create shifted synthetic event payload to mimic Google Calendar update
-                     updated_event = {**primary_req.original_event}
-                     
-                     # The split event logic saved this to Asia/Jerusalem, but isoformat works too
-                     # Let's preserve the original format for start
-                     orig_start_str = primary_req.original_event['start'].get('dateTime')
-                     if orig_start_str and 'T' in orig_start_str:
-                          # ISO 8601 string
-                          # It's safest to just give it a proper timezone aware ISO string matching the local format
-                          pass # Handled by BookingRequest parsing
+        if res == BookingResult.SUCCESS:
+            agent_email, room_name, ref_num = details
+            state.op_update_item("Booker", item_id, "success", f"{room_name} ({ref_num})", agent=agent_email)
 
-                     updated_event['start'] = {'dateTime': primary_req.end_time.isoformat(), 'timeZone': 'Asia/Jerusalem'}
-                     
-                     # The end_time of the request must be dt_orig_end (the real end)
-                     remainder_req = BookingRequest(
-                         event_id=primary_req.event_id,
-                         summary=primary_req.summary,
-                         start_time=primary_req.end_time, # The new start is the old end
-                         end_time=dt_orig_end, # The end is the original true end
-                         utc_start=req_end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                         utc_end=dt_orig_end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                         original_event=updated_event,
-                         opening_time=remainder_opening_time
-                     )
-                     
-                     # Call recursively
-                     self._process_booking_batch([remainder_req])
-             
-             return # Done, split handled the updates
+            # Check if eligible to merge
+            can_merge = False
+            if past_booking and prev_event:
+                prev_room = past_booking[3]
+                prev_user = past_booking[2]
+                slot_duration = max(1.0, (req.end_time - req.start_time).total_seconds() / 3600.0)
+                if (room_name == prev_room and
+                    agent_email == prev_user and
+                    (accumulated_hours + slot_duration) <= max_hours + 0.05):
+                    can_merge = True
 
-        # Normal Update
-        self.calendar_manager.update_event_status(
-             primary_req.event_id, CalendarStatus.SUCCESS, primary_req.original_event, 
-             room_name=room_name, ref_num=ref_num, user=agent_email
-        )
-        
-        # 3. Extension (If Pair)
-        if len(batch) > 1:
-            req2 = batch[1]
-            item_id_ext = state.op_add_item("Booker", f"Extending to {req2.summary}...", "loading")
-            
-            # Get Agent
-            agent = self.agent_manager.get_agent(agent_email)
-            if agent:
-                # Force update. `room_name` was used in `primary_req`.
-                room_id = next((k for k, v in config.ALL_ROOMS.items() if v == room_name), None)
-                success, reason = agent.update_booking(ref_num, room_id, primary_req.utc_start, req2.utc_end)
-                if success:
-                    self._check_and_set_cooldown(req2)
-                    state.op_update_item("Booker", item_id_ext, "success", "Extended!", agent=agent_email)
-                    self.calendar_manager.update_event_status(req2.event_id, CalendarStatus.SUCCESS, req2.original_event, room_name=room_name, ref_num=ref_num, user=agent_email)
-                else:
-                    state.op_update_item("Booker", item_id_ext, "error", f"Extend Failed", details=reason, agent=agent_email)
-                    self.calendar_manager.update_event_status(req2.event_id, CalendarStatus.FAILURE, req2.original_event, reason=f"Extend Failed: {reason}")
+            if can_merge:
+                logger.info(f"[BOOKER] Merging booking for {req.summary} into previous booking {prev_ref}")
+                merged = self.calendar_manager.merge_adjacent_events(
+                    prev_event, req.original_event, ref_num, room_name, agent_email
+                )
+                if not merged:
+                    logger.warning(f"[BOOKER] Merge failed for {req.event_id}; keeping as distinct SUCCESS event.")
+                    self.calendar_manager.update_event_status(
+                        req.event_id, CalendarStatus.SUCCESS, req.original_event,
+                        room_name=room_name, ref_num=ref_num, user=agent_email
+                    )
             else:
-                 state.op_update_item("Booker", item_id_ext, "error", "Agent not found for extend", agent=agent_email)
+                self.calendar_manager.update_event_status(
+                    req.event_id, CalendarStatus.SUCCESS, req.original_event,
+                    room_name=room_name, ref_num=ref_num, user=agent_email
+                )
+        else:
+            error_msg = details if details else "Unknown Failure"
+            state.op_update_item("Booker", item_id, "error", "Failed", details=str(error_msg))
+            self.calendar_manager.update_event_status(
+                req.event_id, CalendarStatus.FAILURE, req.original_event, reason=str(error_msg)
+            )
+
+    def _process_booking_batch(self, batch):
+        """Processes a batch of requests by delegating each to _process_single_booking."""
+        for req in batch:
+            self._process_single_booking(req)
+
+    def _handle_consecutive_booking(self, req: BookingRequest, past_booking: tuple) -> bool:
+        """Legacy helper delegating to _process_single_booking."""
+        self._process_single_booking(req)
+        return True

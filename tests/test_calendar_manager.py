@@ -150,3 +150,134 @@ def test_split_event(calendar_manager, mock_google_client):
     
     # Should start at 11:00 now
     assert kwargs['body']['start']['dateTime'] == '2026-02-14T11:00:00'
+
+def test_split_multi_hour_event_upfront(calendar_manager, mock_google_client):
+    """Test that split_multi_hour_event splits a 3H event into 3 1H BookingRequest objects."""
+    event = {
+        'id': 'evt_3h',
+        'summary': 'Booking: 3 Hours',
+        'description': 'Notes',
+        'start': {'dateTime': '2026-02-14T10:00:00Z', 'timeZone': 'Asia/Jerusalem'},
+        'end': {'dateTime': '2026-02-14T13:00:00Z', 'timeZone': 'Asia/Jerusalem'}
+    }
+    dt_start = datetime(2026, 2, 14, 10, 0, 0, tzinfo=timezone.utc)
+    dt_end = datetime(2026, 2, 14, 13, 0, 0, tzinfo=timezone.utc)
+    
+    # Mock add_event to return dicts with new IDs
+    mock_google_client.add_event.side_effect = [
+        {'id': 'evt_3h_part2'},
+        {'id': 'evt_3h_part3'}
+    ]
+    
+    chunks = calendar_manager.split_multi_hour_event(event, dt_start, dt_end)
+    
+    assert len(chunks) == 3
+    assert chunks[0].event_id == 'evt_3h'
+    assert chunks[0].start_time == dt_start
+    assert chunks[0].end_time == dt_start + timedelta(hours=1)
+    
+    assert chunks[1].event_id == 'evt_3h_part2'
+    assert chunks[1].start_time == dt_start + timedelta(hours=1)
+    assert chunks[1].end_time == dt_start + timedelta(hours=2)
+    
+    assert chunks[2].event_id == 'evt_3h_part3'
+    assert chunks[2].start_time == dt_start + timedelta(hours=2)
+    assert chunks[2].end_time == dt_end
+    
+    # Verify update called for the first chunk
+    mock_google_client.service.events().update.assert_called_once()
+    # Verify add_event called twice for parts 2 and 3
+    assert mock_google_client.add_event.call_count == 2
+
+def test_find_successful_booking_accumulated_duration(calendar_manager, mock_google_client):
+    """Test that find_successful_booking correctly calculates accumulated duration for merged events."""
+    # Mock a 3-hour merged event
+    mock_google_client.service.events().list.return_value.execute.return_value = {
+        'items': [{
+            'id': 'merged_prev',
+            'summary': '[P] Booking: Room 108',
+            'description': 'Booked for User: agent@tau.ac.il\nRef: REF100\nRef: REF200',
+            'location': 'Room 108',
+            'start': {'dateTime': '2026-02-14T10:00:00Z'},
+            'end': {'dateTime': '2026-02-14T13:00:00Z'}
+        }]
+    }
+    
+    target_start = datetime(2026, 2, 14, 13, 0, 0, tzinfo=timezone.utc)
+    preceding = calendar_manager.find_successful_booking(target_start)
+    
+    assert preceding is not None
+    assert preceding.room == 'Room 108'
+    assert preceding.user == 'agent@tau.ac.il'
+    assert preceding.duration_hours == 3.0
+    
+    # Backwards compatibility unpacking check
+    ev, ref, user, room = preceding
+    assert room == 'Room 108'
+    assert user == 'agent@tau.ac.il'
+
+def test_merge_adjacent_events(calendar_manager, mock_google_client):
+    """Test that merge_adjacent_events extends prev_event and deletes current_event."""
+    prev_evt = {
+        'id': 'evt_prev',
+        'summary': '[P] Booking: Room 108',
+        'description': 'User: agent@tau.ac.il\nRef: REF1',
+        'start': {'dateTime': '2026-02-14T10:00:00Z'},
+        'end': {'dateTime': '2026-02-14T11:00:00Z'}
+    }
+    curr_evt = {
+        'id': 'evt_curr',
+        'summary': '[P] Booking: Room 108',
+        'start': {'dateTime': '2026-02-14T11:00:00Z'},
+        'end': {'dateTime': '2026-02-14T12:00:00Z'}
+    }
+    
+    mock_google_client.service.events().get.return_value.execute.return_value = prev_evt
+    
+    success = calendar_manager.merge_adjacent_events(
+        prev_evt, curr_evt, "REF2", "Room 108", "agent@tau.ac.il"
+    )
+    
+    assert success is True
+    # Verify update on prev_evt extends to 12:00:00
+    mock_google_client.service.events().update.assert_called_once()
+    _, kwargs = mock_google_client.service.events().update.call_args
+    assert kwargs['body']['end']['dateTime'] == '2026-02-14T12:00:00Z'
+    assert 'Ref: REF2' in kwargs['body']['description']
+    
+    # Verify delete called on curr_evt
+    mock_google_client.service.events().delete.assert_called_once_with(
+        calendarId="cal123", eventId="evt_curr"
+    )
+
+def test_split_multi_hour_skips_when_add_event_fails(calendar_manager, mock_google_client):
+    """Test that split_multi_hour_event skips subsequent chunks when add_event returns None."""
+    event = {
+        'id': 'evt_2h',
+        'summary': 'Booking: 2 Hour Block',
+        'start': {'dateTime': '2026-02-20T10:00:00Z'},
+        'end': {'dateTime': '2026-02-20T12:00:00Z'}
+    }
+    dt_start = datetime(2026, 2, 20, 10, 0, 0, tzinfo=timezone.utc)
+    dt_end = datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc)
+    
+    # client.add_event fails and returns None
+    mock_google_client.add_event.return_value = None
+    
+    chunks = calendar_manager.split_multi_hour_event(event, dt_start, dt_end)
+    
+    # Only the first updated event should be in chunks, no phantom chunk created
+    assert len(chunks) == 1
+    assert chunks[0].event_id == 'evt_2h'
+
+def test_extract_ref_and_user_multiple_refs(calendar_manager):
+    """Test extracting multiple references from description."""
+    desc = "Booked for User: user1@tau.ac.il\nRoom: Room 108\nRef: REF101\nRef: REF102\nRef: REF103"
+    extracted = calendar_manager._extract_ref_and_user(desc)
+    assert extracted.ref_num == "REF101"
+    assert extracted.user == "user1@tau.ac.il"
+    assert extracted.ref_nums == ["REF101", "REF102", "REF103"]
+    # Tuple unpacking check
+    primary_ref, user = extracted
+    assert primary_ref == "REF101"
+    assert user == "user1@tau.ac.il"

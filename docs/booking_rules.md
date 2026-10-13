@@ -31,17 +31,17 @@ When processing a booking request prior to its opening:
 *   The system treats each hour as a separate, distinct booking attempt.
 
 ### 3-Hour Maximum Rule
-The library API strictly forbids any single reservation block from exceeding 3 hours.
-*   **Single Event Degradation:** If a user requests a single 4-hour block (e.g., 10:00-14:00), the system automatically splits this into a `config.MAX_SINGLE_BOOKING_DURATION_HOURS`-hour sub-request (10:00-13:00) and attempts to book that first. The calendar event handles the split if successful.
-*   **Combined/Merged Prevention:** The system will refuse to merge adjacent events if their combined duration would exceed the `config.MAX_SINGLE_BOOKING_DURATION_HOURS` limit.
+*   **Atomic 1-Hour Decomposition:** Multi-hour Google Calendar events are decomposed upfront into atomic 1-hour chunks on Google Calendar (updating the original event to the first hour and inserting new events for subsequent hours). Each 1-hour chunk is processed independently.
+*   **Combined/Merged Prevention:** The system merges consecutive slots if they share the same room and user, but strictly enforces the `config.MAX_SINGLE_BOOKING_DURATION_HOURS` (3 hours) limit, keeping subsequent hours (e.g., hour 4) as distinct, independent events.
 
 ### User Quotas
 Each university account has undocumented daily and weekly booking limits. The `BookingAgent` bypasses individual limits by treating multiple accounts as a collective pool.
 
 **Exhaustion Logic:**
 *   **Detection:** The server API returns an error containing `"limited"`.
-*   **Action:** The user account is marked as exhausted **for the duration of that specific booking attempt loop only**.
+*   **Exhaustion Action:** The user account is marked as exhausted **for the duration of that specific booking attempt loop only**.
 *   *Note: An agent is not permanently marked as "exhausted" globally. This is because a quota slot might open up later in the day due to a manual cancellation. The system must be free to try the agent again on the next booking cycle.*
+*   **Authentication Quarantine:** If an account fails authentication or session creation, it is quarantined from `get_rotational_agents()`. This prevents repeated synchronous login timeouts from blocking active sniping attempts across room batches.
 
 ### Room Priority Hierarchy
 Rooms are grouped into batches to ensure the best possible locations are secured first.
@@ -138,16 +138,22 @@ flowchart TD
     Sleep --> Start
 ```
 
-## 4. Multi-Hour Logic (Splitting and Merging)
+## 4. Multi-Hour Logic (Upfront Splitting and Merging)
 
-### Splitting (Degradation on Partial Success)
-If a user requests a multi-hour block (e.g., 10:00-13:00) using a single calendar event, and the system fails to secure the full block but manages to book a portion of it (e.g., only 10:00-11:00):
+### Upfront Splitting
+When a user requests a multi-hour block (e.g., 10:00-14:00) using a single calendar event:
+1. **Upfront Decomposition:** The system automatically decomposes the multi-hour event on Google Calendar into consecutive 1-hour `Booking:` events.
+2. **Atomic Processing:** Each 1-hour block is processed independently with its own exact opening time (`Slot Start - 7 Days + 1 Hour`). This completely eliminates runtime degradation loops and multi-hour state machines.
 
-1.  **Extract Success:** The system takes the successful 1-hour chunk, creates a *new* Green `[P]` calendar event reflecting the success.
-2.  **Shift Liability:** The system shifts the original processing event's start time forward by 1 hour (now 11:00-13:00) and leaves its title as `"Booking:"` so the main scan loop picks it up on the next cycle to try again.
-
-### Merging (Re-assembly on Consecutive Success)
-After every successful booking, the system aggressively scans the calendar looking for opportunities to stitch events back together, cleaning up the user's view.
-
-1.  **Conditions for Merge:** Two events must share the exact same booked Room Name and User Email. Furthermore, the End Time of Event A must precisely match the Start Time of Event B (with a tiny 1-minute margin of error).
-2.  **Action:** The system deletes one of the events, and stretches the start/end bounds of the remaining event to cover both timeframes, updating the description to log the multiple reference IDs.
+### Consecutive Priority & Merging
+For each 1-hour slot being booked:
+1. **Preceding Detection:** The system inspects Google Calendar for an existing successful booking whose end time matches the current slot's start time (`event.end == current.start`). This detects preceding bookings even if previous hours (e.g. Hours 1, 2, and 3) were already merged into a single multi-hour block.
+2. **Prioritization:**
+   - **Priority 1 (Room):** Target the same room as the preceding booking (so the user remains in the same room).
+   - **Priority 2 (User):** Target the same user account.
+3. **Merging:**
+   - If the slot succeeds with the **same room** and **same user**, and the total combined duration does not exceed `config.MAX_SINGLE_BOOKING_DURATION_HOURS` (3 hours), the system merges the events in Google Calendar:
+     - The preceding event's end time is extended to cover the new slot.
+     - The reference number is appended to the description.
+     - The current slot's separate event is deleted.
+   - If the combined duration would exceed 3 hours (e.g. Hour 4) or if a different room/user was used, the booking remains as an independent green event in the same room, strictly honoring the university's 3-hour limit per reservation.

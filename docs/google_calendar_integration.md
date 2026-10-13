@@ -54,3 +54,10 @@ Allows users to cancel existing bookings without logging into the clunky univers
 5.  **Result Update:**
     *   *Success:* Event title shrinks to `[DELETED] Booking...` and color turns Gray (8).
     *   *Failure:* Turns Red. Description states `"Permission denied or server error"`.
+
+## 5. Docker Usage Note
+
+When running in a containerized environment (headless), the OAuth2 flow cannot interactively open a browser.
+
+*   **Requirement:** The `token.json` file MUST be present on the host and mounted into the container.
+*   **Workflow:** Run the application locally on a machine with a browser once to generate the `token.json`, then copy/mount it into the Docker environment.

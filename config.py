@@ -23,7 +23,6 @@ LOGIN_WAKE_UP_SECONDS_BEFORE_OPENING = 60
 FINAL_WAKE_UP_SECONDS_BEFORE_OPENING = 5
 BOOKING_RETRY_INTERVAL_SECONDS = 0.5
 BOOKING_TIMEOUT_SECONDS = 120
-MAX_SINGLE_BOOKING_DURATION_HOURS = 3
 
 # Delete Feature
 DELETE_KEYWORD = "DELETE"  # Keyword to search for in event titles (case-insensitive)
@@ -51,7 +50,6 @@ ALL_ROOMS = {**HIGH_PRIORITY_ROOMS, **LOW_PRIORITY_ROOMS}
 
 from utils.logger import setup_colored_logging
 from dashboard.logger import DashboardHandler
-import logging
 
 def setup_logging():
     # 1. Setup Console/File logging
@@ -59,7 +57,7 @@ def setup_logging():
     
     # 2. Attach Dashboard Handler
     dash_handler = DashboardHandler()
-    dash_handler.setLevel(logging.DEBUG) 
+    dash_handler.setLevel(logging.INFO) 
     root.addHandler(dash_handler)
 
     # Silence libraries

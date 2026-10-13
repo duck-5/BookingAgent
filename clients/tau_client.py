@@ -26,10 +26,12 @@ class TauClient:
             "Referer": f"{self.BASE_URL}/schedule.php"
         })
         self.is_logged_in = False
+        self.csrf_token: Optional[str] = None
 
     def login(self) -> bool:
         try:
             self.session.cookies.clear() # Ensure fresh session
+            self.csrf_token = None
             payload = { "email": self.email, "password": self.password, "persistLogin": "on", "login": "submit" }
             # Allow redirects so we can check if we landed on index.php (fail) or schedule.php (success)
             resp = self.session.post(self.LOGIN_URL, data=payload, allow_redirects=True, timeout=20)
@@ -52,13 +54,20 @@ class TauClient:
             self.is_logged_in = False
             return False
 
-    def get_csrf_token(self) -> Optional[str]:
+    def get_csrf_token(self, force_refresh: bool = False) -> Optional[str]:
+        if not force_refresh and self.csrf_token:
+            return self.csrf_token
         try:
             resp = self.session.get(f"{self.BASE_URL}/schedule.php", timeout=20)
             t = resp.text
             
-            if m := re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', t): return m.group(1)
-            if m := re.search(r"CSRF_TOKEN\s*=\s*['\"]([^'\"]+)['\"]", t): return m.group(1)
+            token = None
+            if m := re.search(r'name="CSRF_TOKEN"\s+value="([^"]+)"', t): token = m.group(1)
+            elif m := re.search(r"CSRF_TOKEN\s*=\s*['\"]([^'\"]+)['\"]", t): token = m.group(1)
+            
+            if token:
+                self.csrf_token = token
+                return token
             
             # Debugging
             logger.warning(f"[AGENT] CSRF extraction failed. URL: {resp.url}")
@@ -66,6 +75,7 @@ class TauClient:
             if "Log In" in t or "login" in resp.url:
                 logger.warning("[AGENT] Session appears invalid (redirected to login).")
                 self.is_logged_in = False
+                self.csrf_token = None
                 
             return None
         except Exception as e:
@@ -100,6 +110,7 @@ class TauClient:
                 if not _retry:
                     logger.warning(f"[AGENT] Session expired (HTML response). Re-logging in...")
                     self.is_logged_in = False
+                    self.csrf_token = None
                     if self.login():
                         return self._send_reservation_request(url, data, _retry=True)
                 

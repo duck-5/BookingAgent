@@ -16,14 +16,21 @@ class BookingManager:
         self.agent_manager = agent_manager
         self.failed_rooms = set()
 
-    def attempt_booking(self, request: BookingRequest, stop_event: threading.Event = None, preferred_room_id: int = None, progress_callback=None) -> Tuple[BookingResult, Any]:
+    def attempt_booking(self, request: BookingRequest, stop_event: threading.Event = None, preferred_room_id: int = None, preferred_user_email: str = None, progress_callback=None) -> Tuple[BookingResult, Any]:
         """
         Attempts to book the request using available agents and strategies.
         If preferred_room_id is provided, tries that room first.
+        If preferred_user_email is provided, tries that user first.
         If progress_callback is provided, calls it with the agent_email before attempting.
         Returns (Result, Details).
         """
-        agents = self.agent_manager.get_rotational_agents() # Todo: Pass last successful user preference
+        agents = list(self.agent_manager.get_rotational_agents())
+        if preferred_user_email:
+            pref_agent = self.agent_manager.get_agent(preferred_user_email)
+            if pref_agent:
+                if pref_agent in agents:
+                    agents.remove(pref_agent)
+                agents.insert(0, pref_agent)
         
         # Room Batches - Place preferred room at the very start of the first batch
         high_priority = list(config.HIGH_PRIORITY_ROOMS.keys())
@@ -91,6 +98,14 @@ class BookingManager:
                         # res, ref_num_or_error = agent.book_room(...)
                         res, details = agent.book_room(rid, request.utc_start, request.utc_end)
 
+                        while res == BookingResult.TOO_EARLY:
+                            if stop_event and stop_event.is_set():
+                                return BookingResult.ERROR, "Systems Stopping"
+                            if time.time() - start_time > config.BOOKING_TIMEOUT_SECONDS:
+                                return BookingResult.ERROR, "Timeout"
+                            time.sleep(config.BOOKING_RETRY_INTERVAL_SECONDS)
+                            res, details = agent.book_room(rid, request.utc_start, request.utc_end)
+
                         if res == BookingResult.SUCCESS:
                             log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.SUCCESS, user=agent.email, room=rname, ref_num=details, start_time=request.utc_start, end_time=request.utc_end, message=f"Successfully booked {request.summary}")
                             logger.info(str(log))
@@ -102,26 +117,23 @@ class BookingManager:
                             self.failed_rooms.add(rid)
                             break # Move to next room
                             
-                        elif res == BookingResult.USER_LIMIT:
+                        elif res in (BookingResult.USER_LIMIT, BookingResult.TOO_LONG):
                             exhausted_emails.add(agent.email)
                             continue # Try next agent on the same room
                         
-                        elif res in [BookingResult.TOO_EARLY, BookingResult.CLOSED]:
-                            # Fatal errors for this slot
+                        elif res == BookingResult.CLOSED:
+                            # Fatal error for this slot
                             return res, details
                         
                         elif res == BookingResult.ERROR:
-                            # Log and try next? Or failing hard?
-                            # If it's a login failure, we might want to try next agent.
-                            # If it's a server error, maybe all agents will fail.
+                            # If it's a login failure, mark agent as exhausted for this attempt
                             if "Login Failed" in str(details):
+                                 agent.is_logged_in = False
                                  exhausted_emails.add(agent.email)
                                  continue
                             
                             log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, user=agent.email, room=rname, start_time=request.utc_start, end_time=request.utc_end, reason=str(details), message=f"Error for {request.summary}")
                             logger.error(str(log))
-                            # Continue to next agent/room?
-                            pass
             
             # Sleep briefly to avoid hammering if we are looping (e.g. waiting for slot)
             time.sleep(config.BOOKING_RETRY_INTERVAL_SECONDS)

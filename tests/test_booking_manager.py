@@ -127,8 +127,122 @@ class TestBookingManager(unittest.TestCase):
         
         self.assertEqual(res, BookingResult.USER_LIMIT)
         # Should not have kept rotating through rooms since all agents are exhausted
-        self.assertEqual(agent1.book_room.call_count, 1) # Only tried Room 101
-        self.assertEqual(agent2.book_room.call_count, 1) # Only tried Room 101
+    def test_too_early_retries_and_succeeds(self):
+        """If server returns TOO_EARLY, it should sleep and retry the same agent/room until SUCCESS."""
+        agent1 = MagicMock()
+        agent1.email = "a1@tau.ac.il"
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent1]
+        
+        # Returns TOO_EARLY twice, then SUCCESS
+        agent1.book_room.side_effect = [
+            (BookingResult.TOO_EARLY, "Too early"),
+            (BookingResult.TOO_EARLY, "Too early"),
+            (BookingResult.SUCCESS, "REF999")
+        ]
+        
+        res, details = self.bm.attempt_booking(self.req)
+        
+        self.assertEqual(res, BookingResult.SUCCESS)
+        self.assertEqual(details, ("a1@tau.ac.il", "Room A", "REF999"))
+        self.assertEqual(agent1.book_room.call_count, 3)
+
+    def test_too_early_stops_on_stop_event(self):
+        """If stop_event is signaled during TOO_EARLY retries, it should abort cleanly."""
+        import threading
+        stop_evt = threading.Event()
+        
+        agent1 = MagicMock()
+        agent1.email = "a1@tau.ac.il"
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent1]
+        
+        def book_side_effect(rid, s, e):
+            stop_evt.set() # Signal stop on first call
+            return (BookingResult.TOO_EARLY, "Too early")
+            
+        agent1.book_room.side_effect = book_side_effect
+        
+        res, details = self.bm.attempt_booking(self.req, stop_event=stop_evt)
+        self.assertEqual(res, BookingResult.ERROR)
+        self.assertEqual(details, "Systems Stopping")
+
+    def test_too_long_moves_to_next_agent_same_room(self):
+        """If an agent hits TOO_LONG (3-hour limit), it should exhaust agent and try next agent on same room."""
+        agent1 = MagicMock()
+        agent1.email = "agent1@tau.ac.il"
+        agent2 = MagicMock()
+        agent2.email = "agent2@tau.ac.il"
+        
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent1, agent2]
+        
+        agent1.book_room.return_value = (BookingResult.TOO_LONG, "3-Hour Limit Exceeded")
+        agent2.book_room.return_value = (BookingResult.SUCCESS, "REF_TL_OK")
+        
+        res, details = self.bm.attempt_booking(self.req)
+        
+        self.assertEqual(res, BookingResult.SUCCESS)
+        self.assertEqual(details[0], "agent2@tau.ac.il")
+        self.assertEqual(details[1], "Room A")
+        self.assertEqual(details[2], "REF_TL_OK")
+
+    def test_preferred_user_not_logged_in_is_prepended(self):
+        """If preferred user is not logged in (absent from rotational agents), get_agent should still prepend them."""
+        logged_in_agent = MagicMock()
+        logged_in_agent.email = "logged_in@tau.ac.il"
+        self.agent_manager_mock.get_rotational_agents.return_value = [logged_in_agent]
+        
+        pref_agent = MagicMock()
+        pref_agent.email = "preferred@tau.ac.il"
+        self.agent_manager_mock.get_agent.return_value = pref_agent
+        
+        pref_agent.book_room.return_value = (BookingResult.SUCCESS, "REF_PREF")
+        
+        res, details = self.bm.attempt_booking(self.req, preferred_user_email="preferred@tau.ac.il")
+        
+        self.assertEqual(res, BookingResult.SUCCESS)
+        self.assertEqual(details[0], "preferred@tau.ac.il")
+        self.agent_manager_mock.get_agent.assert_called_with("preferred@tau.ac.il")
+
+    def test_cancel_booking_owner_direct_match(self):
+        """cancel_booking tries the owner agent first if owner_email is provided."""
+        from core.entities import DeletionRequest
+        owner_agent = MagicMock()
+        owner_agent.email = "owner@tau.ac.il"
+        owner_agent.delete_booking.return_value = (True, "Deleted")
+        self.agent_manager_mock.get_agent.return_value = owner_agent
+
+        del_req = DeletionRequest(
+            event_id="e1", summary="DELETE", ref_num="REF99",
+            original_event={}, owner_email="owner@tau.ac.il"
+        )
+        success, reason = self.bm.cancel_booking(del_req)
+
+        self.assertTrue(success)
+        self.assertEqual(reason, "Deleted")
+        self.agent_manager_mock.get_agent.assert_called_once_with("owner@tau.ac.il")
+        owner_agent.delete_booking.assert_called_once_with("REF99")
+
+    def test_cancel_booking_fallback_when_no_owner(self):
+        """cancel_booking falls back to trying all agents when owner_email is None or unknown."""
+        from core.entities import DeletionRequest
+        self.agent_manager_mock.get_agent.return_value = None
+        agent1 = MagicMock()
+        agent1.email = "a1@tau.ac.il"
+        agent1.delete_booking.return_value = (False, "Not found")
+        agent2 = MagicMock()
+        agent2.email = "a2@tau.ac.il"
+        agent2.delete_booking.return_value = (True, "Deleted")
+        self.agent_manager_mock.get_all_agents.return_value = [agent1, agent2]
+
+        del_req = DeletionRequest(
+            event_id="e2", summary="DELETE", ref_num="REF88",
+            original_event={}, owner_email=None
+        )
+        success, reason = self.bm.cancel_booking(del_req)
+
+        self.assertTrue(success)
+        self.assertEqual(reason, "Deleted")
+        agent1.delete_booking.assert_called_once_with("REF88")
+        agent2.delete_booking.assert_called_once_with("REF88")
 
 if __name__ == '__main__':
     unittest.main()

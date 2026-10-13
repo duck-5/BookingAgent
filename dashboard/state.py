@@ -24,7 +24,7 @@ class MonitorState:
             "next_action": "Unknown",
             "active_tasks": 0
         }
-        self.logs = [] # Changed from deque to list for easier searching/filtering
+        self.logs = deque(maxlen=300)
         self.actions = {} 
         self.events = [] 
 
@@ -152,16 +152,11 @@ class MonitorState:
             "message": message
         }
         with self._lock:
-            self.logs.insert(0, entry) # Newest first
-            self._cleanup_logs()
+            self.logs.appendleft(entry) # Newest first, automatically bounded by maxlen
             
     def _cleanup_logs(self):
-        """Remove logs older than 15 minutes."""
-        # 15 mins = 900 seconds
-        cutoff = time.time() - 900
-        # self.logs is sorted desc by time. iterate from end.
-        while self.logs and self.logs[-1]["timestamp"] < cutoff:
-            self.logs.pop()
+        """Bounded by deque maxlen."""
+        pass
 
     def register_action(self, name: str, callback):
         with self._lock:

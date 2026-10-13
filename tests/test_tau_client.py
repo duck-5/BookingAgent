@@ -172,3 +172,23 @@ def test_update_booking_failure(client, mock_session):
         assert msg is not None
         assert "Invalid end time" in msg
 
+def test_csrf_token_caching(client, mock_session):
+    mock_resp = MagicMock()
+    mock_resp.text = '<input type="hidden" name="CSRF_TOKEN" value="cached_csrf_123">'
+    mock_session.get.return_value = mock_resp
+    
+    # First call: fetches from session
+    token1 = client.get_csrf_token()
+    assert token1 == "cached_csrf_123"
+    assert mock_session.get.call_count == 1
+    
+    # Second call: uses cache, session.get is NOT called again
+    token2 = client.get_csrf_token()
+    assert token2 == "cached_csrf_123"
+    assert mock_session.get.call_count == 1
+    
+    # Force refresh: forces network call
+    token3 = client.get_csrf_token(force_refresh=True)
+    assert token3 == "cached_csrf_123"
+    assert mock_session.get.call_count == 2
+
