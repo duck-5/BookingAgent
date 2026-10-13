@@ -103,5 +103,24 @@ class TestPerformanceAndResilience(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def test_logger_setup_creates_nested_directory(self):
+        """Verifies that setup_colored_logging automatically creates missing parent directories."""
+        import tempfile
+        import os
+        import shutil
+        tmp_dir = tempfile.mkdtemp()
+        nested_log = os.path.join(tmp_dir, "logs", "system.log")
+        root = None
+        try:
+            root = setup_colored_logging(nested_log)
+            root.info("Testing nested log write")
+            self.assertTrue(os.path.isfile(nested_log))
+        finally:
+            if root:
+                for h in list(root.handlers):
+                    root.removeHandler(h)
+                    h.close()
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
 if __name__ == '__main__':
     unittest.main()

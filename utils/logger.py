@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import colorama
 
@@ -34,7 +35,7 @@ class ColoredFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt, datefmt='%H:%M:%S')
         return formatter.format(record)
 
-def setup_colored_logging(log_file="system.log"):
+def setup_colored_logging(log_file="logs/system.log"):
     """
     Sets up the root logger with colored console output and file output.
     """
@@ -50,6 +51,11 @@ def setup_colored_logging(log_file="system.log"):
     console_handler.setFormatter(ColoredFormatter())
     console_handler.setLevel(logging.DEBUG) # Show everything on console for now
     root_logger.addHandler(console_handler)
+
+    # Ensure parent log directory exists
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
     # File Handler (Rotating)
     from logging.handlers import RotatingFileHandler
