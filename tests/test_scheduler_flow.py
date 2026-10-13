@@ -337,6 +337,29 @@ class TestSchedulerFlow(unittest.TestCase):
             "slot2", CalendarStatus.SUCCESS, {}, room_name="Room 101", ref_num="REF_S2", user="a@tau.ac.il"
         )
 
+    def test_booking_fails_with_user_permission_restriction_marks_calendar_failure(self):
+        """When booking returns user limit/permission error, scheduler marks calendar event as FAILURE with exact reason."""
+        now = datetime.now(timezone.utc)
+        req = BookingRequest(
+            event_id="slot_perm_fail", summary="Booking Study", 
+            start_time=now, end_time=now + timedelta(hours=1),
+            utc_start="U1", utc_end="U2", original_event={}, opening_time=now - timedelta(days=1)
+        )
+        self.scheduler.calendar_manager.scan_for_bookings.return_value = [req]
+        self.scheduler.calendar_manager.find_successful_booking.return_value = None
+        
+        self.scheduler.booking_manager.attempt_booking.return_value = (
+            BookingResult.USER_LIMIT, "User Limit: You are not allowed to change this reservation."
+        )
+
+        self.scheduler._scan_and_book_cycle()
+
+        self.scheduler.calendar_manager.update_event_status.assert_any_call(
+            "slot_perm_fail", CalendarStatus.PROCESSING, {}
+        )
+        self.scheduler.calendar_manager.update_event_status.assert_any_call(
+            "slot_perm_fail", CalendarStatus.FAILURE, {}, reason="User Limit: You are not allowed to change this reservation."
+        )
 
 if __name__ == '__main__':
     unittest.main()

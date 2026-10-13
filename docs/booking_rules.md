@@ -34,12 +34,13 @@ When processing a booking request prior to its opening:
 *   **Atomic 1-Hour Decomposition:** Multi-hour Google Calendar events are decomposed upfront into atomic 1-hour chunks on Google Calendar (updating the original event to the first hour and inserting new events for subsequent hours). Each 1-hour chunk is processed independently.
 *   **Combined/Merged Prevention:** The system merges consecutive slots if they share the same room and user, but strictly enforces the `config.MAX_SINGLE_BOOKING_DURATION_HOURS` (3 hours) limit, keeping subsequent hours (e.g., hour 4) as distinct, independent events.
 
-### User Quotas
-Each university account has undocumented daily and weekly booking limits. The `BookingAgent` bypasses individual limits by treating multiple accounts as a collective pool.
+### User Quotas & Account Permissions
+Each university account has undocumented daily and weekly booking limits and resource permissions. The `BookingAgent` bypasses individual limits by treating multiple accounts as a collective pool.
 
 **Exhaustion Logic:**
-*   **Detection:** The server API returns an error containing `"limited"`.
-*   **Exhaustion Action:** The user account is marked as exhausted **for the duration of that specific booking attempt loop only**.
+*   **Detection:** The server API returns an error indicating quota or permission limits containing keywords such as `"limited"`, `"not allowed"` (e.g. `"You are not allowed to change this reservation."`), `"permission"`, `"restricted"`, or `"not authorized"`.
+*   **Exhaustion Action:** The user account is marked as exhausted **for the duration of that specific booking attempt loop only**, and the system immediately falls back to the next available agent.
+*   **Early Loop Termination:** If all accounts in the pool are exhausted, the booking attempt terminates immediately with `USER_LIMIT` without attempting remaining rooms or entering repetitive sleep-retry cycles.
 *   *Note: An agent is not permanently marked as "exhausted" globally. This is because a quota slot might open up later in the day due to a manual cancellation. The system must be free to try the agent again on the next booking cycle.*
 *   **Authentication Quarantine:** If an account fails authentication or session creation, it is quarantined from `get_rotational_agents()`. This prevents repeated synchronous login timeouts from blocking active sniping attempts across room batches.
 

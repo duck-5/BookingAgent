@@ -102,6 +102,43 @@ def test_book_room_room_taken(client, mock_session):
         
         assert status == BookingResult.ROOM_TAKEN
 
+def test_book_room_user_not_allowed(client, mock_session):
+    client.is_logged_in = True
+    
+    with patch.object(client, 'get_csrf_token', return_value="fake_token"):
+        mock_response = MagicMock()
+        mock_response.content = b'{"success": false}'
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": False,
+            "data": {"errors": ["You are not allowed to change this reservation."]}
+        }
+        mock_session.post.return_value = mock_response
+
+        status, ref = client.book_room(123, "2026-10-19T10:00:00Z", "2026-10-19T11:00:00Z")
+        
+        assert status == BookingResult.USER_LIMIT
+        assert "You are not allowed to change this reservation." in ref
+
+def test_book_room_permission_denied(client, mock_session):
+    client.is_logged_in = True
+    
+    with patch.object(client, 'get_csrf_token', return_value="fake_token"):
+        mock_response = MagicMock()
+        mock_response.content = b'{"success": false}'
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "success": False,
+            "data": {"errors": ["Permission denied for this resource"]}
+        }
+        mock_session.post.return_value = mock_response
+
+        status, ref = client.book_room(123, "2026-10-19T10:00:00Z", "2026-10-19T11:00:00Z")
+        
+        assert status == BookingResult.USER_LIMIT
+        assert "Permission denied" in ref
+
+
 def test_delete_booking_success(client, mock_session):
     client.is_logged_in = True
     

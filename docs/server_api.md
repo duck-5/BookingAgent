@@ -13,6 +13,7 @@ This document covers all interactions, payload structures, and error parsing rel
 2.  **Parameters (Form Data):** `email`, `password`, `login=submit`, and `CSRF_TOKEN`.
 3.  **Note on CSRF:** The initial CSRF token must be scraped from the `value` attribute of the hidden input field on the login page's HTML.
 4.  **Session:** The server returns `PHPSESSID` and `login_token` cookies. The `TauClient` (`requests.Session`) must persist these for all subsequent calls.
+5.  **Failure Detection:** When authentication fails, the server remains on `index.php` with HTTP 200 and renders an alert `div` with `id="loginError"` (e.g. `"We could not match your username or password"`). `TauClient` extracts this message and exposes it on `client.last_login_error`.
 
 ## 2. Reading Data (The Sync Mechanism)
 
@@ -94,9 +95,9 @@ The TAU server typically returns an HTTP `200 OK` status even when a logical boo
 *   **Agent Action:** The system Abandons this Room ID and attempts the next high/low priority room.
 
 ### 2. `USER_LIMIT`
-*   **Substring Match:** `"limited"`
-*   **Meaning:** The specific agent account has hit the university's daily or weekly maximum hours.
-*   **Agent Action:** The `BookingManager` suppresses this agent for the remainder of the *current* booking loop iteration, and swaps to the next authenticated account.
+*   **Substring Match:** `"limited"`, `"not allowed"` (e.g. `"You are not allowed to change this reservation."`), `"permission"`, `"restricted"`, or `"not authorized"`.
+*   **Meaning:** The specific agent account has hit quota limits or lacks permissions to modify/create reservations for the requested resource/time.
+*   **Agent Action:** The `BookingManager` suppresses this agent for the remainder of the *current* booking loop iteration, and swaps to the next authenticated account. If all agents are exhausted, it halts immediately without looping.
 
 ### 3. `TOO_EARLY`
 *   **Substring Match:** `"this far in the future"`

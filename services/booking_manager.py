@@ -49,6 +49,9 @@ class BookingManager:
         self.failed_rooms.clear() # Reset per attempt
         
         exhausted_emails = set()
+        rooms_taken = set()
+        last_error = None
+        last_user_error = None
 
         # Retry Loop (Sniping / Persistence)
         while True:
@@ -67,15 +70,18 @@ class BookingManager:
             # Check if all rooms failed
             total_rooms = sum(len(b) for b in room_batches)
             if len(self.failed_rooms) >= total_rooms:
-                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason="All Rooms Taken", message=f"All rooms failed for {request.summary}")
+                reason = "All Rooms Taken" if len(rooms_taken) == total_rooms else (last_error or "All Rooms Taken")
+                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason=reason, message=f"All rooms failed for {request.summary}")
                 logger.warning(str(log))
-                return BookingResult.ROOM_TAKEN, "All Rooms Taken"
+                res_code = BookingResult.ROOM_TAKEN if len(rooms_taken) == total_rooms else BookingResult.ERROR
+                return res_code, reason
                 
             # Check if all agents are exhausted
             if len(agents) == 0 or len(exhausted_emails) >= len(agents):
-                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason="All Agents Exhausted", message=f"No agents left to attempt booking for {request.summary}")
+                reason = last_user_error or "All Agents Exhausted"
+                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason=reason, message=f"No agents left to attempt booking for {request.summary}")
                 logger.warning(str(log))
-                return BookingResult.USER_LIMIT, "All Agents Exhausted or Failed"
+                return BookingResult.USER_LIMIT, reason
 
             # Iterate Rooms
             for batch_name, rooms in zip(["HIGH", "LOW"], room_batches):
@@ -114,11 +120,17 @@ class BookingManager:
                         
                         elif res == BookingResult.ROOM_TAKEN:
                             # Room is taken for this specific slot.
+                            rooms_taken.add(rid)
                             self.failed_rooms.add(rid)
                             break # Move to next room
                             
                         elif res in (BookingResult.USER_LIMIT, BookingResult.TOO_LONG):
                             exhausted_emails.add(agent.email)
+                            last_user_error = str(details)
+                            if len(exhausted_emails) >= len(agents):
+                                log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason=last_user_error, message=f"No agents left to attempt booking for {request.summary}")
+                                logger.warning(str(log))
+                                return BookingResult.USER_LIMIT, last_user_error
                             continue # Try next agent on the same room
                         
                         elif res == BookingResult.CLOSED:
@@ -126,14 +138,26 @@ class BookingManager:
                             return res, details
                         
                         elif res == BookingResult.ERROR:
-                            # If it's a login failure, mark agent as exhausted for this attempt
-                            if "Login Failed" in str(details):
-                                 agent.is_logged_in = False
-                                 exhausted_emails.add(agent.email)
-                                 continue
+                            last_error = str(details)
+                            details_lower = str(details).lower()
+                            # If it's a login failure, permission error, or user-level error, mark agent as exhausted
+                            if any(k in details_lower for k in ["login failed", "csrf", "not allowed", "permission", "restricted", "unauthorized", "forbidden"]):
+                                if "login failed" in details_lower:
+                                    agent.is_logged_in = False
+                                exhausted_emails.add(agent.email)
+                                last_user_error = str(details)
+                                if len(exhausted_emails) >= len(agents):
+                                    log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, start_time=request.utc_start, end_time=request.utc_end, reason=last_user_error, message=f"No agents left to attempt booking for {request.summary}")
+                                    logger.warning(str(log))
+                                    return BookingResult.USER_LIMIT, last_user_error
+                                continue
                             
                             log = ActionLogDetails(action=ActionType.BOOK, status=ActionStatus.FAILED, user=agent.email, room=rname, start_time=request.utc_start, end_time=request.utc_end, reason=str(details), message=f"Error for {request.summary}")
                             logger.error(str(log))
+
+                    # If all available agents failed to book this room, mark room as failed
+                    if rid not in self.failed_rooms:
+                        self.failed_rooms.add(rid)
             
             # Sleep briefly to avoid hammering if we are looping (e.g. waiting for slot)
             time.sleep(config.BOOKING_RETRY_INTERVAL_SECONDS)

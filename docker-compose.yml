@@ -2,7 +2,7 @@ services:
   booking-agent:
     build: .
     container_name: booking-agent
-    image: booking-agent
+    image: booking-agent:v4.1
     volumes:
       - ./credentials.json:/app/credentials.json
       - ./client_secret.json:/app/client_secret.json

@@ -261,5 +261,101 @@ class TestBookingManager(unittest.TestCase):
         self.assertEqual(room_name, "Room 999")
         self.assertEqual(ref_num, "REF999")
 
+    def test_user_not_allowed_terminates_single_agent_immediately(self):
+        """When the sole agent receives 'not allowed' error, attempt_booking terminates immediately without trying other rooms or looping."""
+        agent = MagicMock()
+        agent.email = "yuvalmantin@tau.ac.il"
+        agent.book_room.return_value = (
+            BookingResult.USER_LIMIT, "User Limit: You are not allowed to change this reservation."
+        )
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.USER_LIMIT)
+        self.assertIn("You are not allowed to change this reservation.", details)
+        # Crucial: agent was called only ONCE, not on all rooms repeatedly!
+        self.assertEqual(agent.book_room.call_count, 1)
+
+    def test_user_not_allowed_rotates_to_next_agent(self):
+        """When first agent receives 'not allowed' error, attempt_booking rotates to second agent for the same room."""
+        agent1 = MagicMock()
+        agent1.email = "agent1@tau.ac.il"
+        agent1.book_room.return_value = (
+            BookingResult.USER_LIMIT, "User Limit: You are not allowed to change this reservation."
+        )
+
+        agent2 = MagicMock()
+        agent2.email = "agent2@tau.ac.il"
+        agent2.book_room.return_value = (BookingResult.SUCCESS, "REF_A2_OK")
+
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent1, agent2]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.SUCCESS)
+        self.assertEqual(details[0], "agent2@tau.ac.il")
+        self.assertEqual(details[2], "REF_A2_OK")
+        self.assertEqual(agent1.book_room.call_count, 1)
+        self.assertEqual(agent2.book_room.call_count, 1)
+
+    def test_all_rooms_fail_with_error_terminates_cleanly(self):
+        """When all rooms encounter API or server errors, attempt_booking terminates cleanly without looping until timeout."""
+        agent = MagicMock()
+        agent.email = "agent@tau.ac.il"
+        agent.book_room.return_value = (BookingResult.ERROR, "Server Error: Internal Failure")
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.ERROR)
+        self.assertEqual(details, "Server Error: Internal Failure")
+        # Called exactly once per room (total 3 rooms in mock config: 101, 102, 201), NOT looped repeatedly
+        self.assertEqual(agent.book_room.call_count, 3)
+
+    def test_error_with_not_allowed_details_exhausts_agent_and_halts(self):
+        """When BookingResult.ERROR is returned with 'not allowed' in details, agent is exhausted and halts immediately."""
+        agent = MagicMock()
+        agent.email = "agent@tau.ac.il"
+        agent.book_room.return_value = (BookingResult.ERROR, "API Error: You are not allowed to change this reservation.")
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.USER_LIMIT)
+        self.assertIn("You are not allowed to change this reservation.", details)
+        self.assertEqual(agent.book_room.call_count, 1)
+
+    def test_all_rooms_taken_terminates_with_all_rooms_taken_result(self):
+        """When every room returns ROOM_TAKEN, attempt_booking returns ROOM_TAKEN with 'All Rooms Taken'."""
+        agent = MagicMock()
+        agent.email = "agent@tau.ac.il"
+        agent.book_room.return_value = (BookingResult.ROOM_TAKEN, "Conflict")
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.ROOM_TAKEN)
+        self.assertEqual(details, "All Rooms Taken")
+        # 3 rooms in mock config
+        self.assertEqual(agent.book_room.call_count, 3)
+
+    def test_mixed_taken_and_error_terminates_with_error_reason(self):
+        """When some rooms return ROOM_TAKEN and some return ERROR, result is ERROR with last error details."""
+        agent = MagicMock()
+        agent.email = "agent@tau.ac.il"
+        agent.book_room.side_effect = [
+            (BookingResult.ROOM_TAKEN, "Conflict"),
+            (BookingResult.ERROR, "Gateway Timeout"),
+            (BookingResult.ROOM_TAKEN, "Conflict")
+        ]
+        self.agent_manager_mock.get_rotational_agents.return_value = [agent]
+
+        res, details = self.bm.attempt_booking(self.req)
+
+        self.assertEqual(res, BookingResult.ERROR)
+        self.assertEqual(details, "Gateway Timeout")
+        self.assertEqual(agent.book_room.call_count, 3)
+
 if __name__ == '__main__':
     unittest.main()

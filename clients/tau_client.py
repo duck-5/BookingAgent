@@ -27,11 +27,13 @@ class TauClient:
         })
         self.is_logged_in = False
         self.csrf_token: Optional[str] = None
+        self.last_login_error: Optional[str] = None
 
     def login(self) -> bool:
         try:
             self.session.cookies.clear() # Ensure fresh session
             self.csrf_token = None
+            self.last_login_error = None
             payload = { "email": self.email, "password": self.password, "persistLogin": "on", "login": "submit" }
             # Allow redirects so we can check if we landed on index.php (fail) or schedule.php (success)
             resp = self.session.post(self.LOGIN_URL, data=payload, allow_redirects=True, timeout=20)
@@ -45,11 +47,20 @@ class TauClient:
                 self.is_logged_in = True
                 return True
             
-            logger.warning(f"[AGENT] Login fail for {self.email} (invalid credential or session).")
+            err_msg = "invalid credential or session"
+            if hasattr(resp, "text") and isinstance(resp.text, str):
+                if m := re.search(r'<div[^>]*id=["\']loginError["\'][^>]*>(.*?)</div>', resp.text, re.I | re.S):
+                    err_msg = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+                elif m := re.search(r'<div[^>]*class=["\'][^"\']*alert-danger[^"\']*["\'][^>]*>(.*?)</div>', resp.text, re.I | re.S):
+                    err_msg = re.sub(r'<[^>]+>', '', m.group(1)).strip()
+
+            self.last_login_error = err_msg
+            logger.warning(f"[AGENT] Login fail for {self.email} ({err_msg}).")
             self.is_logged_in = False
             return False
             
         except Exception as e:
+            self.last_login_error = str(e)
             logger.error(f"[AGENT] Login exception for {self.email}: {e}")
             self.is_logged_in = False
             return False
@@ -133,9 +144,10 @@ class TauClient:
                         # Clean up formatting if it's a list
                         if isinstance(err, list): s = ", ".join(map(str, err))
                         
+                        USER_LIMIT_KEYWORDS = ("limited", "not allowed", "permission", "restricted", "not authorized")
                         s_lower = s.lower()
                         if "conflicting" in s_lower or "unavailable" in s_lower: return BookingResult.ROOM_TAKEN, f"Room Conflict: {s}"
-                        if "limited" in s_lower: return BookingResult.USER_LIMIT, f"User Limit: {s}"
+                        if any(kw in s_lower for kw in USER_LIMIT_KEYWORDS): return BookingResult.USER_LIMIT, f"User Limit: {s}"
                         if "this far in the future" in s_lower: return BookingResult.TOO_EARLY, "Too Early"
                         if "not last longer than 3 hours" in s_lower: return BookingResult.TOO_LONG, "3-Hour Limit Exceeded"
                         if "not valid" in s_lower: return BookingResult.CLOSED, "Booking Closed"
@@ -157,8 +169,9 @@ class TauClient:
                     error_msg = json.dumps(res)
 
                 s = error_msg.lower()
+                USER_LIMIT_KEYWORDS = ("limited", "not allowed", "permission", "restricted", "not authorized")
                 if "conflicting" in s or "unavailable" in s: return BookingResult.ROOM_TAKEN, f"Room Conflict: {error_msg}"
-                if "limited" in s: return BookingResult.USER_LIMIT, f"User Limit: {error_msg}"
+                if any(kw in s for kw in USER_LIMIT_KEYWORDS): return BookingResult.USER_LIMIT, f"User Limit: {error_msg}"
                 if "this far in the future" in s: return BookingResult.TOO_EARLY, "Too Early"
                 if "not last longer than 3 hours" in s: return BookingResult.TOO_LONG, "3-Hour Limit Exceeded"
                 if "not valid" in s: return BookingResult.CLOSED, "Booking Closed"

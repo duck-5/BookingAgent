@@ -55,6 +55,7 @@ booking_agent/
 ├── scheduler.py            # Orchestrator (initializes services)
 ├── config.py               # Configuration and constants
 ├── credentials.json        # User accounts (list of email/pass/owner_id)
+├── verify_credentials.py   # Root convenience CLI to verify all user credentials
 ├── logs/                   # Runtime logs directory (logs/system.log)
 ├── clients/                # External API wrappers
 │   ├── __init__.py
@@ -73,6 +74,9 @@ booking_agent/
 │   ├── app.py              # FastAPI app
 │   ├── state.py            # Shared State
 │   └── logger.py           # UI logging handler
+├── tools/                  # Diagnostic and inspection tools
+│   ├── debug_calendar.py   # Google Calendar debugger
+│   └── verify_credentials.py # User credentials verification and diagnostics CLI
 ├── docs/                   # AI/Developer Documentation
 ├── tests/                  # Unit and integration tests
 ├── Dockerfile              # Multi-stage container build
@@ -125,3 +129,11 @@ To prevent execution stuttering and latency during microsecond sniping:
 *   **Agent Quarantine (`AgentManager`):** Only accounts with verified active sessions (`is_logged_in == True`) are rotated during booking attempts. Accounts with invalid credentials are automatically quarantined from the active attack pool, preventing blocking network timeouts during time-critical reservation windows.
 *   **Bounded Dashboard Memory (`MonitorState`):** Dashboard logs are stored in a thread-safe `collections.deque(maxlen=300)` with $O(1)$ `appendleft`, eliminating memory copies and lock contention under high log volume.
 *   **Rotating File Logging (`utils.logger`):** Runtime logs are bounded via `RotatingFileHandler` (10 MB cap, 3 backups) to protect disk I/O performance and prevent file bloat.
+ 
+## 7. Diagnostics & Verification Tools
+
+### A. Credentials Verification (`verify_credentials.py` / `tools/verify_credentials.py`)
+Provides concurrent authentication validation and diagnostics for all configured user accounts against the university portal.
+* **Concurrent Execution:** Verifies multiple credentials in parallel via a thread pool (configurable via `-w` / `--workers`).
+* **Session Diagnostics:** Checks session cookies (`login_token`, `PHPSESSID`), validates CSRF token scraping, queries active bookings count (`-b`), and extracts explicit server rejection error messages (e.g. `"We could not match your username or password"`).
+* **Clear Table & Formats:** Outputs structured tabular results (Unicode box drawing or ASCII fallback) with per-account latency, diagnostics, and summary statistics. Also supports machine-readable `--json` output.
